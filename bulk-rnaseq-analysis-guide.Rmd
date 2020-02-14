@@ -1,0 +1,26 @@
+---
+title: "Bulk RNA-seq data processing and differential gene expression analysis pipeline"
+author: Erick Lu
+output: 
+  html_document:
+    toc: true
+---
+
+## Introduction
+
+Here, I present a complete bulk RNA-sequencing pipeline, including:
+
+1. Finding and downloading the raw data using SRA tools
+2. Mapping FASTQ files using STAR
+3. Differential gene analysis using DESeq2
+4. Visualizations for Bulk RNA-sequencing
+
+## Obtaining the raw data
+
+## Downloading FASTQ files using SRA toolkit
+
+## Aligning reads using STAR
+
+## Performing Differential Gene Expression Analysis
+
+## Conclusion
