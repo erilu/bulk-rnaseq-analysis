@@ -15,9 +15,91 @@ Here, I present a complete bulk RNA-sequencing pipeline, including:
 3. Differential gene analysis using DESeq2
 4. Visualizations for Bulk RNA-sequencing
 
+
 ## Obtaining the raw data
 
-## Downloading FASTQ files using SRA toolkit
+### Data repository at GSE106305
+
+The raw data is available at: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE106305. There are several samples associated with this study, and we will only be focusing on the following samples:
+
+Sample Name | GSM Identifier | SRA Identifier (SRX) | SRA Runs (SRR, download these)
+------------------ | ----------------- | -------------------------- | --------------------------------------------------------
+LNCaP_RNA-Seq_Empty_Vector_Normoxia_rep1 | GSM3145509 | SRX4096735 | SRR7179504, SRR7179505, SRR7179506, and SRR7179507
+LNCaP_RNA-Seq_Empty_Vector_Normoxia_rep2 | GSM3145510 | SRX4096736 | SRR7179508, SRR7179509, SRR7179510, and SRR7179511
+LNCaP_RNA-Seq_Empty_Vector_Hypoxia_rep1 | GSM3145513 | SRX4096739 | SRR7179520, SRR7179521, SRR7179522, and SRR7179523
+LNCaP_RNA-Seq_Empty_Vector_Hypoxia_rep2 | GSM3145514 | SRX4096740 | SRR7179524, SRR7179525, SRR7179526, and SRR7179527
+PC3_RNA-Seq_siCtrl_Normoxia_rep1 | GSM3145517 | SRX4096743 | SRR7179536
+PC3_RNA-Seq_siCtrl_Normoxia_rep2 | GSM3145518 | SRX4096744 | SRR7179537
+PC3_RNA-Seq_siCtrl_Hypoxia_rep1 | GSM3145521 | SRX4096747 | SRR7179540
+PC3_RNA-Seq_siCtrl_Hypoxia_rep2 | GSM3145522 | SRX4096748 | SRR7179541
+
+We have selected the control samples for both cell lines (Empty Vector for LNCaP and siCtrl for PC3) in conditions of either normoxia or hypoxia. This will allow us to analyze the LNCaP and PC3 cell lines for their gene expression changes in response to hypoxia, and compare which pathways are commonly upregulated/downregulated by both lines.
+
+Each of the samples above have an associated SRA accession number, indicated above. These SRA accessions are used to download the raw sequencing data. To eventually get the raw data in FASTQ format, we first need to first download the SRA files (`.sra`) associated with each sample.
+
+### Downloading FASTQ files using SRA toolkit
+
+In order to download the SRA files onto your machine, we use the NCBI's SRA toolkit, which lets us use the command line to download a specified SRA accession ID. You can read more about SRA toolkit here: https://www.ncbi.nlm.nih.gov/books/NBK242621/.
+
+The toolkit works by first using the `prefetch` command to download the SRA file associated with the specified SRA ID. The SRA file contains a set of "instructions" for downloading the sequencing data associated with the SRA ID from NCBI. A sample command would be: `prefetch SRR7179504`. This will download the file `SRR7179504.sra` into your home directory at ~/ncbi/public/sra/.
+
+After you have downloaded the SRA file, you can use `fastq-dump` to extract the contents of it into a `.fastq` file. The Edwards lab at SDSU provides a nice tutorial for how to use fastq-dump here: https://edwards.sdsu.edu/research/fastq-dump/. A sample command would be: 
+
+```bash
+fastq-dump --outdir fastq --gzip --skip-technical  --readids --read-filter pass --dumpbase --split-3 --clip ~/ncbi/public/sra/SRR7179504.sra
+```
+
+Since there are lots of SRA files associated with our samples, it would take a long time to manually run `prefetch` and `fastq-dump` for all the files. To automate all the downloads, I wrote a small script in python to call `fastq-dump` on each of the SRA IDs we want. The code is shown below as well as provided in this repo as `fastq_download.py`:
+
+```py
+import subprocess
+
+sra_numbers = [
+    "SRR7179504", "SRR7179505", "SRR7179506", "SRR7179507",
+    "SRR7179508", "SRR7179509", "SRR7179510", "SRR7179511",
+    "SRR7179520", "SRR7179521", "SRR7179522", "SRR7179523",
+    "SRR7179524", "SRR7179525", "SRR7179526", "SRR7179527",
+    "SRR7179536", "SRR7179537", "SRR7179540","SRR7179541"
+    ]
+
+# this will download the .sra files to ~/ncbi/public/sra/ (will create directory if not present)
+for sra_id in sra_numbers:
+    print ("Currently downloading: " + sra_id)
+    prefetch = "prefetch " + sra_id
+    print ("The command used was: " + prefetch)
+    subprocess.call(prefetch, shell=True)
+
+# this will extract the .sra files from above into a folder named 'fastq'
+for sra_id in sra_numbers:
+    print ("Generating fastq for: " + sra_id)
+    fastq_dump = "fastq-dump --outdir fastq --gzip --skip-technical  --readids --read-filter pass --dumpbase --split-3 --clip ~/ncbi/public/sra/" + sra_id + ".sra"
+    print ("The command used was: " + fastq_dump)
+    subprocess.call(fastq_dump, shell=True)
+```
+
+We can run the python script by simply navigating to the folder on your machine where you want to store the fastq files (via the command line), then running `python fastq_download.py`. This should work in python 2 and python 3. After running the python script, our .fastq files should all be sitting in a directory called 'fastq'.
+
+### Concatenating FASTQ files
+
+For samples such as LNCaP_RNA-Seq_Empty_Vector_Normoxia_rep1, there are four resulting fastq files containing the sequencing data. We can concatenate these four files into one file by using `cat` in the command line and storing the output into a new fastq file. Below, I perform the concatenation for each of the LNCaP samples, and :
+
+```bash
+cat SRR7179504_pass.fastq.gz SRR7179505_pass.fastq.gz SRR7179506_pass.fastq.gz SRR7179507_pass.fastq.gz  > LNCAP_Normoxia_S1.fastq.gz
+cat SRR7179508_pass.fastq.gz SRR7179509_pass.fastq.gz SRR7179510_pass.fastq.gz SRR7179511_pass.fastq.gz  > LNCAP_Normoxia_S2.fastq.gz
+cat SRR7179520_pass.fastq.gz SRR7179521_pass.fastq.gz SRR7179522_pass.fastq.gz SRR7179523_pass.fastq.gz  > LNCAP_Hypoxia_S1.fastq.gz
+cat SRR7179524_pass.fastq.gz SRR7179525_pass.fastq.gz SRR7179526_pass.fastq.gz SRR7179527_pass.fastq.gz  > LNCAP_Hypoxia_S2.fastq.gz
+```
+
+In contrast, there is only one fastq file for each of the PC3 samples. We can just rename them from their SRR identifiers to their real sample names using `mv`:
+
+```bash
+mv SRR7179536_pass.fastq.gz PC3_Normoxia_S1.fastq.gz
+mv SRR7179537_pass.fastq.gz PC3_Normoxia_S2.fastq.gz
+mv SRR7179540_pass.fastq.gz PC3_Hypoxia_S1.fastq.gz
+mv SRR7179541_pass.fastq.gz PC3_Hypoxia_S2.fastq.gz
+```
+
+
 
 ## Aligning reads using STAR
 
