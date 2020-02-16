@@ -99,9 +99,67 @@ mv SRR7179540_pass.fastq.gz PC3_Hypoxia_S1.fastq.gz
 mv SRR7179541_pass.fastq.gz PC3_Hypoxia_S2.fastq.gz
 ```
 
-
-
 ## Aligning reads using STAR
+
+Each read in your fastq file must be "mapped" to a reference genome. Mapping can be described as finding the place in the reference genome that best matches the fragment of an mRNA transcript captured in the read. In this section, I will describe the concepts behind mapping reads to a reference genome, and how to do it using the tool STAR and some python scripting.
+
+### The concepts behind mapping reads
+
+In order to perform bulk RNA-sequencing, a "library" must first be prepared from the cells of interest and this library is what is sequenced to create the fastq files. To create a library, mRNA from the cells is captured and reverse transcribed into cDNA. This is then fragmented into small pieces, and sequencing adaptors are ligated to the ends of each fragment to create the "library". The resulting fastq file contains the sequences of all these tiny little fragments. Using the sequence for each fragment (a "read"), we can then try to figure out from which part of the genome that fragment came from, and subsequently which gene was being transcribed to create the original mRNA that was captured. Counting the number of times a "read" mapped to a specific gene gives us information about how "high" or "low" a gene was being expressed.
+
+### STAR
+
+A great RNA-seq alignment tool is STAR (Spliced Transcripts Alignment to a Reference, https://github.com/alexdobin/STAR). In order to install STAR, follow the installation instructions provided in the github repo for the platform you are using.
+
+#### building human genome index using genomeGenerate
+
+Once STAR is installed, we first need to build a genome index. In our case, we need to use the human reference genome since we are analyzing RNA-seq data from human cells. We have to supply STAR with the human reference genome sequence (FASTA) and annotation (GTF) files, from which STAR will make genome index files.
+
+We can download the FASTA and GTF files from the ensembl website (https://uswest.ensembl.org/Homo_sapiens/Info/Index) or using the command line:
+
+```bash
+wget ftp://ftp.ensembl.org/pub/release-99/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+wget ftp://ftp.ensembl.org/pub/release-99/gtf/homo_sapiens/Homo_sapiens.GRCh38.99.gtf.gz
+gunzip *.gz
+```
+
+Once these are downloaded and unzipped, we can run the STAR genomeGenerate command below to make the genome index file. For the genomeDir parameter, you can specify the directory where you are keeping the FASTA and GTF files.
+
+```bash
+STAR --runThreadN 64 --runMode genomeGenerate --genomeDir /data/genomes/h38/STAR/ --genomeFastaFiles /data/genomes/h38/STAR/Homo_sapiens.GRCh38.dna.primary_assembly.fa --sjdbGTFfile /data/genomes/h38/STAR/Homo_sapiens.GRCh38.99.gtf
+```
+
+The output from successfully running the command looks like:
+
+```{}
+Feb 15 20:06:34 ..... started STAR run
+Feb 15 20:06:34 ... starting to generate Genome files
+Feb 15 20:07:28 ... starting to sort Suffix Array. This may take a long time...
+Feb 15 20:07:41 ... sorting Suffix Array chunks and saving them to disk...
+Feb 15 20:20:11 ... loading chunks from disk, packing SA...
+Feb 15 20:21:15 ... finished generating suffix array
+Feb 15 20:21:15 ... generating Suffix Array index
+Feb 15 20:25:16 ... completed Suffix Array index
+Feb 15 20:25:16 ..... processing annotations GTF
+Feb 15 20:25:26 ..... inserting junctions into the genome indices
+Feb 15 20:27:58 ... writing Genome to disk ...
+Feb 15 20:28:01 ... writing Suffix Array to disk ...
+Feb 15 20:28:18 ... writing SAindex to disk
+Feb 15 20:28:20 ..... finished successfully
+```
+
+After running the command, you should see a bunch of genome index files in the directory specified by genomeDir. Now, we can start mapping reads from our FASTQ files, which I will explain in the next section.
+
+#### mapping reads
+
+An example STAR command used to map a single sample, LNCAP_Normoxia_S1_R1_001.fastq.gz, to the reference genome that we just built is:
+
+```bash
+STAR --runThreadN 64 --genomeDir /data/genomes/h38/STAR --outFilterType BySJout --outFilterMismatchNoverLmax 0.04 --outFilterMismatchNmax 999 --alignSJDBoverhangMin 1 --alignSJoverhangMin 8 --outFilterMultimapNmax 20 --alignIntronMin 20 --alignIntronMax 1000000 --alignMatesGapMax 1000000 --readFilesIn /fastq/LNCAP_Normoxia_S1_R1_001.fastq.gz --clip3pAdapterSeq GATCGGAAGAGCACACGTCTGAACTCCAGTCAC --outSAMtype BAM SortedByCoordinate --quantMode GeneCounts --outFileNamePrefix LNCAP_Normoxia_S1
+```
+Notice that I've plugged in the directory that contains the genome index files for `--genomeDir`, as well as the fastq file location for sample LNCAP_Normoxia_S1_R1_001.fastq.gz for `--readFilesIn` and also provided the sample name for `--outFileNamePrefix`.
+
+#### using python to map reads for all samples
 
 ## Performing Differential Gene Expression Analysis
 
