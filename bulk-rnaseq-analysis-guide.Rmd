@@ -159,7 +159,75 @@ STAR --runThreadN 64 --genomeDir /data/genomes/h38/STAR --outFilterType BySJout 
 ```
 Notice that I've plugged in the directory that contains the genome index files for `--genomeDir`, as well as the fastq file location for sample LNCAP_Normoxia_S1_R1_001.fastq.gz for `--readFilesIn` and also provided the sample name for `--outFileNamePrefix`.
 
-#### using python to map reads for all samples
+
+Since we have 8 samples to run, and each sample will take a while to run, we can use a python script to run the command for each fastq in the directory:
+
+```py
+import subprocess
+import os
+
+# modify these variables based on where you store your data / genome index
+output_directory = "STAR_output/"
+genome_directory = "/data/genomes/h38/STAR/"
+fastq_directory = "/data/analysis/hypoxia/fastq/"
+
+os.mkdir(output_directory)
+for fastq in os.listdir(fastq_directory):
+    # only process files that end in fastq.gz
+    if fastq.endswith('.fastq.gz'):
+        prefix=fastq.strip(".fastq.gz") + "_output"
+        # make an output folder for the current fastq file
+        os.mkdir(output_directory + prefix)
+        print ("Currently mapping: " + fastq)
+        # run STAR on the current fastq file
+        subprocess.call("STAR --runThreadN 64 --genomeDir " + genome_directory + " --readFilesCommand zcat --outFilterType BySJout --outFilterMismatchNoverLmax 0.04 --outFilterMismatchNmax 999 --alignSJDBoverhangMin 1 --alignSJoverhangMin 8 --outFilterMultimapNmax 20 --alignIntronMin 20 --alignIntronMax 1000000 --alignMatesGapMax 1000000 --readFilesIn "+ fastq_directory + fastq + " --clip3pAdapterSeq GATCGGAAGAGCACACGTCTGAACTCCAGTCAC --outSAMtype BAM SortedByCoordinate --quantMode GeneCounts --outFileNamePrefix " + output_directory + prefix + "/", shell=True)
+```
+
+The output of a successful STAR alignment looks like this, for one iteration of the loop:
+
+```{}
+Currently mapping: PC3_Normoxia_S1.fastq.gz
+Feb 16 23:28:42 ..... started STAR run
+Feb 16 23:28:42 ..... loading genome
+Feb 16 23:28:59 ..... started mapping
+Feb 16 23:31:07 ..... finished mapping
+Feb 16 23:31:10 ..... started sorting BAM
+Feb 16 23:32:59 ..... finished successfully
+```
+
+We can save the script as align_STAR.py, and run the script by simply typing `python align_STAR.py` in the command line (should work in python 2 or 3). The output containing the alignment files can be found in the folder `STAR_output`.
+
+### Understanding ReadsPerGene.out.tab
+
+In the STAR_output folder, you will find a folder of results for each one of the FASTQ files you mapped. Inside each folder, you will find: 
+
+```{}
+Aligned.sortedByCoord.out.bam
+Log.final.out
+Log.out
+Log.progress.out
+ReadsPerGene.out.tab
+SJ.out.tab
+```
+
+The file that contains the data you need is `ReadsPerGene.out.tab`. This file contains the number of reads that mapped to each gene in the transcriptome. A quick glance at the file using the command below shows the structure of the file, in which there are some QC metrics at the beginning of the file (N_unmapped, etc.) followed by each gene in the transcriptome. 
+
+```ba
+cat ReadsPerGene.out.tab | head -n 10
+```
+
+```{}
+N_unmapped	2461926	2461926	2461926
+N_multimapping	4255262	4255262	4255262
+N_noFeature	4048236	41792820	4475290
+N_ambiguous	3081395	50727	1691846
+ENSG00000223972	0	0	0
+ENSG00000227232	3	0	3
+ENSG00000278267	13	0	13
+ENSG00000243485	0	0	0
+ENSG00000284332	0	0	0
+ENSG00000237613	0	0	0
+```
 
 ## Performing Differential Gene Expression Analysis
 
