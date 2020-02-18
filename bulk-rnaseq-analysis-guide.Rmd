@@ -229,6 +229,64 @@ ENSG00000284332	0	0	0
 ENSG00000237613	0	0	0
 ```
 
+The first column corresponds to the ensembl gene ID, and columns 2, 3, and 4 correspond to the counts mapped for each gene. You might be wondering why there are 3 columns of counts-- each column corresponds to the "strandedness" of the read mapping. An RNA-seq library is composed of DNA, which has two strands: a "sense" strand and an "anti-sense" strand. RNA-sequencing libraries can be prepared as either "unstranded" or "stranded". The column you choose for downstream analysis is typically dictated by the type of library kit that was used to prepare the samples.
+
+* If an "unstranded" library prep kit was used, column 2 should be selected. In this case, we don't know which strand the original mRNA was produced from, and reads are mapped to both the sense and anti-sense strand.
+
+* If a "stranded" library prep kit was used, we must choose from column 3 or 4. The information from which strand the mRNA originated from is retained. Column 3 corresponds to the first read strand aligned, and column 4 corresponds to the second read strand aligned.
+
+Looking at the sample information at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM3145522, we see that the TruSeq® Stranded mRNA Library Prep Kit (RS-122-2101, Illumina) was used to prepare the samples. Since this is a stranded library prep kit, we must select from column 3 or 4. Looking at the output, we observe that column 4 contains the reads whereas column 3 does not. We will proceed with using column 4 from each of the samples for downstream analysis.
+
+### combining read counts from each sample
+
+There is an folder for each one of our samples. We need to combine column 4 in `ReadsPerGene.out.tab` for each of the samples into one data file. To do so, we can loop through each of the `ReadsPerGene.out.tab` files in Python and extract information from the column corresponding to the correct strand using the code below.
+
+```py
+import os
+import csv
+
+# modify desired_column based on strandedness of library kit
+desired_column = 3
+output_directory = "STAR_output/"
+sample_dict = {}
+sample_names = []
+
+# loop through each folder and store data from ReadsPerGene.out.tab in sample_dict
+for folder in os.listdir(output_directory):
+    if folder.endswith("_output"):
+        file_name=folder.strip('_output')
+        sample_names.append(file_name)
+        gene_dict = {}
+        with open(output_directory + folder + "/ReadsPerGene.out.tab") as tabfile:
+            print("Column " + str(desired_column) + " of " + file_name + " stored")
+            reader = csv.reader(tabfile, delimiter = "\t")
+            for row in reader:
+                gene_dict[row[0]]=row[desired_column]
+        # store gene_dict for the current file in sample_dict
+        sample_dict[file_name] = gene_dict
+
+# write sample_dict to output files
+# the qc metrics are stored in qc.csv, and the gene counts are stored in raw_counts.csv
+with open("raw_counts.csv", "wt") as counts_file, open("qc.csv", "wt") as qc_file:
+    counts_writer = csv.writer(counts_file)
+    qc_writer = csv.writer(qc_file)
+    counts_writer.writerow( ['ensembl_id']+ sample_names )
+    qc_writer.writerow( ['qc_metric']+ sample_names )
+    sorted_genes = sorted(list(sample_dict[sample_names[0]].keys()))
+    for gene in sorted_genes:
+        output=[gene]
+        for sample in sample_names:
+            output.append(sample_dict[sample][gene])
+        if gene.startswith("N_"):
+            qc_writer.writerow(output)
+        else:
+            counts_writer.writerow(output)
+```
+
+The code outputs a file called `raw_counts.csv`, with 9 columns. The first column is the Ensembl ID of each of the genes in the transcriptome. The rest of the columns correspond to the counts per gene for the 8 samples. Another file named `qc.csv` is created containing the qc metrics that were at the beginning of the `ReadsPerGene.out.tab` file for each sample.
+
 ## Performing Differential Gene Expression Analysis
+
+DESeq2 explanation: in order to perform differential gene analysis using the R package DESeq2, from bioconductor. 
 
 ## Conclusion
