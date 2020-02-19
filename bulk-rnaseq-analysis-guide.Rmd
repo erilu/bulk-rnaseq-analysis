@@ -289,4 +289,140 @@ The code outputs a file called `raw_counts.csv`, with 9 columns. The first colum
 
 DESeq2 explanation: in order to perform differential gene analysis using the R package DESeq2, from bioconductor. 
 
+A great tutorial that goes into the nitty-gritty details of this analysis can be found here: https://www.bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html. My analysis below is an example of the workflow that a scientist would use to analyze their RNA-seq data.
+
+Installing DESeq2:
+
+```{r eval=F}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("DESeq2")
+```
+
+### Loading data and packages
+
+```{r}
+library("DESeq2")
+library("tidyverse")
+```
+
+We can now load `raw_counts.csv` into R, and take a look at the structure of the data
+
+```{r}
+data <- read.csv("raw_counts.csv", header = T)
+data <- data[,sort(colnames(data))]
+head(data)
+```
+
+```{r}
+dim(data)
+```
+
+We observe that there are 60676 rows and 9 columns to the data, in which each row is a gene and each column corresponds to the reads per gene for each sample. This is the format that is appropriate for the DESeq2 package. It would be nice to have each Ensembl ID translated into its gene name. We can build an annotation file using the BioMart at ensembl.org, which I'll explain in the following section.
+
+### Making an annotation file from BioMart
+
+A genome annotation file wil let us map ensembl IDs to their gene names. To build one:
+
+1. First go to the ensembl BioMart at http://uswest.ensembl.org/biomart/martview/
+2. Choose the database to use, in this case "Ensembl Genes 99" or whatever is the current version
+3. Choose an annotation to use, in this case "Human Genes (GRCh38.p13) 
+4. On the left sidebar, click "Attributes", which will allow you to select the items you want to map. The items you want are "Gene stable ID", (which is the ensemble id in our raw_counts.csv file), and "Gene name". You can un-check "Gene stable ID version", "Transcript stable ID", and "Transcript stable ID version". You can also choose to include other attributes of your liking, such as "Gene type" to know which genes are protein-coding. If we want to perform Gene Set Enrichment Analysis (GSEA) downstream, we will need this category.
+5. Click on results, check "unique results only", select export as csv, and hit the "Go" button!
+
+The annotation should download to your computer as "mart_export.txt". We can rename it to "GRCh38.p13_annotation.csv" read it into R:
+
+```{r}
+human_annotation <- read.csv("GRCh38.p13_annotation.csv", header = T, stringsAsFactors = F)
+head(human_annotation)
+```
+
+We observe that there are two columns, one named "Gene.stable.ID" which is contains the ensembl IDs, and a second column named "Gene.name" which contains the gene names that we want to map to our `raw_counts.csv` file. To map the names, we can join the two tables based on the ensembl IDs using the `right_join()` function from the tidyverse.
+
+```{r}
+annotated_data <- right_join(human_annotation, data, by = c("Gene.stable.ID" = "ensembl_id"))
+annotated_data
+write.csv(annotated_data, file = "gene_annotated_raw_counts.csv")
+```
+
+### Creating the DESeq2 object
+
+To create the DESeq2 object, we can use the function `DESeqDataSetFromMatrix`, which requires three items:
+
+1. countData - The data in the form of an integer matrix, in which the rownames correspond to the gene IDs. 
+2. colData - A table that provides the sample groups and identifies which samples fall in each group (i.e. biological replicates).
+3. design - A formula that expressed how the counts for each gene depend on the variables in colData. Typically if you are just comparing between groups, we can use the groups defined in colData.
+
+```{r}
+# make a counts matrix in which rownames are ensembl ids
+my_countData <- column_to_rownames(data, "ensembl_id")
+
+# identify biological replicates
+condition <- c(rep("LNCAP_Hypoxia", 2), rep("LNCAP_Normoxia", 2), rep("PC3_Hypoxia", 2), rep("PC3_Normoxia", 2))
+
+# assign replicates to each sample name
+my_colData <- as.data.frame(condition)
+rownames(my_colData) <- colnames(data[,-1])
+my_colData
+```
+
+Now that we have these the required inputs, we can run `DESeqDataSetFromMatrix`
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = my_countData,
+							  colData = my_colData,
+							  design = ~condition)
+```
+
+This can immediately be processed using the `DESeq()`, which will perform differential expression analysis based on a negative binomial distribution. From the documentation, this function will perform:
+
+1. estimation of size factors: estimateSizeFactors
+2. estimation of dispersion: estimateDispersions
+3. Negative Binomial GLM fitting and Wald statistics: nbinomWaldTest
+
+More information about what goes into this processing step can be found here: https://www.bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
+
+```{r}
+dds <- DESeq(dds)
+```
+
+We can observe some basic information about the dds object just by calling its name:
+
+```{r}
+dds
+```
+
+We can also sift through the dds object using `@` and `$`. For example, we can find the raw counts data that was used to create the dds object at:
+
+```{r}
+head(dds@assays$data@listData$counts)
+```
+
+## Visualizations: sample variability
+
+At this point, we can start to assess sample to sample variability.
+
+
+```{r}
+vsd <- vst(dds, blind = TRUE)
+```
+
+We can plug the variance stabilized object into the following functions:
+
+### 1. Distance Plot
+
+### 2. PCA Plot
+
+### 3. Variable Genes Heatmap
+
+### Create individual dds objects
+
+
+
+
+
+
+
+
 ## Conclusion
