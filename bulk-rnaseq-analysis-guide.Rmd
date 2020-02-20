@@ -401,8 +401,7 @@ head(dds@assays$data@listData$counts)
 
 ## Visualizations: sample variability
 
-At this point, we can start to assess sample to sample variability.
-
+At this point, we can start to assess sample to sample variability. DESeq2 has some built-in functions that can be used to do so, including distance plots and PCA plots. In order to use these functions, we first perform a variance stabilizing transformation on the data using `vst()`:
 
 ```{r}
 vsd <- vst(dds, blind = TRUE)
@@ -412,12 +411,118 @@ We can plug the variance stabilized object into the following functions:
 
 ### 1. Distance Plot
 
+```{r}
+plotDists = function (vsd.obj) {
+  sampleDists <- dist(t(assay(vsd.obj)))
+  sampleDistMatrix <- as.matrix( sampleDists )
+  rownames(sampleDistMatrix) <- paste( vsd.obj$condition )
+  colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+  pheatmap(sampleDistMatrix,
+           clustering_distance_rows = sampleDists,
+           clustering_distance_cols = sampleDists,
+           col = colors)
+}
+plotDists(vsd)
+```
+
 ### 2. PCA Plot
+
+```{r}
+name.plotPCA = function (vsd.obj) {
+  pcaData <- plotPCA(vsd.obj,  intgroup = c("condition"), returnData = T)
+  percentVar <- round(100 * attr(pcaData, "percentVar"))
+  ggplot(pcaData, aes(PC1, PC2, color=condition)) +
+    geom_point(size=3) +
+    labs(x = paste0("PC1: ",percentVar[1],"% variance"),
+         y = paste0("PC2: ",percentVar[2],"% variance"),
+         title = "PCA Plot colored by condition") +
+    geom_text_repel(aes(label = name), color = "black")
+}
+
+name.plotPCA(vsd)
+```
 
 ### 3. Variable Genes Heatmap
 
+```{r}
+
+vsd.obj = lncap_vsd
+
+plotHeatmap <- function (vsd.obj, num_genes = 500, annotation) {
+  brewer_palette <- "RdBu"
+  # Ramp the color in order to get the scale.
+  ramp <- colorRampPalette(brewer.pal(11, brewer_palette))
+  mr <- ramp(256)[256:1]
+  # get the stabilized counts from the vsd object
+  stabilized_counts <- assay(vsd.obj)
+  # calculate the variances by row(gene) to find out which genes are the most variable across the samples.
+  row_variances <- rowVars(stabilized_counts)
+  # get the top most variable genes
+  top_variable_genes <- stabilized_counts[order(row_variances, decreasing=T)[1:num_genes],]
+  # subtract out the means from each row, leaving the variances for each gene
+  top_variable_genes <- top_variable_genes - rowMeans(top_variable_genes, na.rm=T)
+  # replace the ensembl ids with the gene names
+  gene_names <- annotation$Gene.name[match(rownames(top_variable_genes), annotation$Gene.stable.ID)]
+  rownames(top_variable_genes) <- gene_names
+  # reconstruct colData without sizeFactors for heatmap labeling
+  coldata <- as.data.frame(vsd.obj@colData)
+  coldata$sizeFactor <- NULL
+  # draw heatmap using pheatmap
+  my_heatmap <- pheatmap(top_variable_genes, color = mr, annotation_col = coldata, fontsize_col = 5, fontsize_row = 250/num_genes, fontsize = 5, border_color = NA)
+  my_heatmap
+}
+
+plotHeatmap(vsd, annotation = human_annotation)
+plotHeatmap(vsd, num_genes = 30, annotation = human_annotation)
+plotHeatmap(vsd, num_genes = 100, annotation = human_annotation)
+
+```
+
 ### Create individual dds objects
 
+Because a lot of the variability in the data is due to the cell line difference, and because the biological comparisons that we want to make are only within either LNCaP, we will create an individual dds object for just LNCaP samples and and just the PC3 samples. The function generate_DESeq_object() below will make a dds object using your raw counts data and the groups that you want to compare. So far, this function can only do groups of 2. It will select the columns out from the raw data that match the group designations using `grep()`, build the colData matrix based on your group designations and the samples it selected, then generate and process the dds object using `DESeqDataSetFromMatrix()` and `DESeq()`.
+
+```{r}
+generate_DESeq_object <- function (my_data, groups) {
+  my_data <- column_to_rownames(my_data, "ensembl_id")
+  data_subset1 <- my_data[,grep(str_c("^", groups[1]), colnames(my_data))]
+  data_subset2 <- my_data[,grep(str_c("^", groups[2]), colnames(my_data))]
+  my_countData <- cbind(data_subset1, data_subset2)
+  condition <- c(rep(groups[1],ncol(data_subset1)), rep(groups[2],ncol(data_subset2)))
+  my_colData <- as.data.frame(condition)
+  rownames(my_colData) <- colnames(my_countData)
+  print(my_colData)
+  dds <- DESeqDataSetFromMatrix(countData = my_countData,
+  							  colData = my_colData,
+  							  design = ~ condition)
+  dds <- DESeq(dds)
+  return(dds)
+}
+
+lncap <- generate_DESeq_object(data, c("LNCAP_Hypoxia", "LNCAP_Normoxia"))
+pc3 <- generate_DESeq_object(data, c("PC3_Hypoxia", "PC3_Normoxia"))
+```
+
+We can double check to make sure that the appropriate columns have been selected and that the colData is correct.
+
+```{r}
+lncap@colData
+head(lncap@assays$data@listData$counts)
+```
+
+```{r}
+lncap_vsd <- vst(lncap, blind = T)
+pc3_vsd <- vst(pc3, blind = T)
+```
+
+```{r}
+plotHeatmap(lncap_vsd, 50, annotation = human_annotation)
+plotHeatmap(pc3_vsd, 50, annotation = human_annotation)
+```
+
+### extract results from dds object
+
+### exploring the results ouptut
 
 
 
