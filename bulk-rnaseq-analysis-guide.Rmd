@@ -520,10 +520,103 @@ plotHeatmap(lncap_vsd, 50, annotation = human_annotation)
 plotHeatmap(pc3_vsd, 50, annotation = human_annotation)
 ```
 
+
+
 ### extract results from dds object
+
+```{r}
+generate_DE_results <- function (dds, comparisons, fdrcutoff = 0.001, rawpcutoff = 0.001, log2cutoff = 0.5, cpmcutoff = 2) {
+  # generate average counts per million metric from raw count data 
+  raw_counts <- counts(dds, normalized = F)
+  cpms <- enframe(rowMeans(cpm(raw_counts)))
+  colnames(cpms) <- c("ensembl_id", "avg_cpm")
+  
+  # extract DESeq results between the comparisons indicated
+  res <- results(dds, contrast = c("condition", comparisons[1], comparisons[2]))[,-c(3,4)]
+  
+  # annotate the data with gene name and average counts per million value
+  res <- as_tibble(res, rownames = "ensembl_id")
+  # read in the annotation and append it to the data
+  my_annotation <- read.csv("GRCh38.p13_annotation.csv", header = T, stringsAsFactors = F)
+  res <- left_join(res, my_annotation, by = c("ensembl_id" = "Gene.stable.ID"))
+  # append the average cpm value to the results data
+  res <- left_join(res, cpms, by = c("ensembl_id" = "ensembl_id"))
+  
+  # combine normalized counts with entire DE list
+  normalized_counts <- round(counts(dds, normalized = TRUE),3)
+  pattern <- str_c(comparisons[1], "|", comparisons[2])
+  combined_data <- as_tibble(cbind(res, normalized_counts[,grep(pattern, colnames(normalized_counts))] ))
+  combined_data <- combined_data[order(combined_data$log2FoldChange, decreasing = T),]
+  
+  # make ordered rank file for GSEA, selecting only protein coding genes
+  res_prot <- res[which(res$Gene.type == "protein_coding"),]
+  res_prot_ranked <- res_prot[order(res_prot$log2FoldChange, decreasing = T),c("Gene.name", "log2FoldChange")]
+  res_prot_ranked <- na.omit(res_prot_ranked)
+  res_prot_ranked$Gene.name <- str_to_upper(res_prot_ranked$Gene.name)
+  
+  # generate sorted lists with the indicated cutoff values
+  res <- res[order(res$log2FoldChange, decreasing=TRUE ),]
+  de_genes_fdr <- res[which(res$padj < fdrcutoff),]
+  de_genes_rawp <- res[which(res$pvalue < rawpcutoff),]
+  de_genes_log2f <- res[which(abs(res$log2FoldChange) > log2cutoff & res$padj < fdrcutoff),]
+  de_genes_cpm <- res[which(res$avg_cpm > cpmcutoff & res$padj < fdrcutoff),]
+  
+  # write output to files
+  write.csv (de_genes_fdr, file = paste0(comparisons[1], "_vs_", comparisons[2], "_fdrgenes.csv"), row.names =F)
+  write.csv (de_genes_rawp, file = paste0(comparisons[1], "_vs_", comparisons[2], "_rawpgenes.csv"), row.names =F)
+  write.csv (de_genes_log2f, file = paste0(comparisons[1], "_vs_", comparisons[2], "_log2f.csv"), row.names =F)
+  write.csv (de_genes_cpm, file = paste0(comparisons[1], "_vs_", comparisons[2], "_cpm_cutoff.csv"), row.names =F)
+  write.csv (combined_data, file = paste0(comparisons[1], "_vs_", comparisons[2], "_allgenes.csv"), row.names =F)
+  write.table (res_prot_ranked, file = paste0(comparisons[1], "_vs_", comparisons[2], "_rank.rnk"), sep = "\t", row.names = F, quote = F)
+  
+  writeLines( paste0("For the comparison: ", comparisons[1], "_vs_", comparisons[2], ", out of ", nrow(combined_data), " genes, there were: \n", 
+               nrow(de_genes_rawp), " genes below p-value ", rawpcutoff, "\n",
+               nrow(de_genes_fdr), " genes below padj ", fdrcutoff, "\n",
+               nrow(de_genes_log2f), " genes below padj ", fdrcutoff, " and above a log2FoldChange of ", log2cutoff, "\n",
+               nrow(de_genes_cpm), " genes below padj ", fdrcutoff, " and above an avg cpm of ", cpmcutoff, "\n",
+               "Differential expression gene lists ordered by log2fchange with the cutoffs above have been generated.") )
+  gene_count <- tibble (cutoff_parameter = c("pvalue", "padj", "log2fc", "avg_cpm" ), 
+                        cutoff_value = c(rawpcutoff, fdrcutoff, log2cutoff, cpmcutoff), 
+                        signif_genes = c(nrow(de_genes_rawp), nrow(de_genes_fdr), nrow(de_genes_log2f), nrow(de_genes_cpm)))
+  invisible(gene_count)
+}
+
+lncap_output <- generate_DE_results (lncap, c("LNCAP_Hypoxia", "LNCAP_Normoxia"))
+pc3_output <- generate_DE_results(pc3, c("PC3_Hypoxia", "PC3_Normoxia"))
+
+lncap_output
+pc3_output
+```
 
 ### exploring the results ouptut
 
+Explain column by column and how we got it from the above code
+
+```{r}
+res <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
+res
+```
+
+
+## Visualizations
+
+### Differential gene heatmap
+
+
+```{r}
+DE_gene_heatmap <- function(res, padj_cutoff = 0.0001, ngenes = 20) {
+  brewer_palette <- "RdBu"
+  # Ramp the color in order to get the scale.
+  ramp <- colorRampPalette(brewer.pal(11, brewer_palette))
+  mr <- ramp(256)[256:1]
+  significant_genes <- res %>% filter(padj < padj_cutoff) %>% arrange (desc(log2FoldChange)) %>% head (ngenes)
+  heatmap_values <- as.matrix(significant_genes[,-c(1:8)])
+  rownames(heatmap_values) <- significant_genes$Gene.name
+  pheatmap(heatmap_values, color = mr, scale = "row", fontsize_col = 10, fontsize_row = 200/ngenes, fontsize = 5, border_color = NA)
+}
+DE_gene_heatmap(res, 0.001, 30)
+
+```
 
 
 
