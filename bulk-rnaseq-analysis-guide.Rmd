@@ -600,8 +600,110 @@ res
 
 ## Visualizations
 
-### Differential gene heatmap
+### 1. PlotCounts (Upgraded)
 
+The built-in plotCounts function in DESeq2 leaves a lot to be desired:
+
+
+```{r}
+plotCounts(dds, gene=which.min(res$padj), intgroup="condition")
+
+```
+
+We can extract the data using `returnData = T`, and plot it using ggplot2:
+
+```{r}
+
+
+d <- plotCounts(dds, gene=which.min(res$padj), intgroup="condition", 
+                returnData=TRUE)
+d
+ggplot(d, aes(x=condition, y=count)) + 
+  geom_point(position=position_jitter(w=0.1,h=0), aes (color = condition)) + 
+  scale_y_log10(breaks=c(25,100,400))
+
+```
+
+But even this function is hard to work with, since we have to input the ensembl id instead of a gene name. As a researcher, we typically want to search by gene name, and this forces us to look up the ensembl genes each time. To work around this, I re-wrote plotCounts to accept either the gene name, ensembl id, or an index such as the example with which.min(res$padj), below. I also provide two ways to normalize the data - counts per million or the built-in DESeq2 normalized counts.
+
+```{r}
+plot_counts <- function (dds, gene, normalization = "DESeq2"){
+  if (normalization == "cpm") {
+    normalized_data <- cpm(counts(dds, normalized = F)) # normalize the raw data by counts per million
+  } else if (normalization == "DESeq2")
+    normalized_data <- counts(dds, normalized = T) # use DESeq2 normalized counts
+  # get sample groups from colData
+  condition <- dds@colData$condition
+  # get the gene name from the ensembl id
+  if (is.numeric(gene)) { # check if an index is supplied or if ensembl_id is supplied
+    if (gene%%1==0 )
+      ensembl_id <- rownames(normalized_data)[gene]
+    else
+      stop("Invalid index supplied.")
+  } else if (gene %in% annotation$Gene.name){ # check if a gene name is supplied
+    ensembl_id <- annotation$Gene.stable.ID[which(annotation$Gene.name == gene)]
+  } else if (gene %in% annotation$Gene.stable.ID){
+    ensembl_id <- gene
+  } else {
+    stop("Gene not found. Check spelling.")
+  }
+  expression <- normalized_data[ensembl_id,]
+  gene_name <- annotation$Gene.name[which(annotation$Gene.stable.ID == ensembl_id)]
+  # construct a tibble with the grouping and expression
+  gene_tib <- tibble(condition = condition, expression = expression)
+  ggplot(gene_tib, aes(x = condition, y = expression))+
+    geom_boxplot(outlier.size = NULL)+
+    geom_point()+
+    labs (title = paste0("Expression of ", gene_name, " - ", ensembl_id), x = "group", y = paste0("Normalized expression (", normalization , ")"))+
+    theme(axis.text.x = element_text(size = 11), axis.text.y = element_text(size = 11))
+}
+
+plot_counts(dds, "GSTA1")
+plot_counts(dds, "ENSG00000000419")
+plot_counts(dds, gene = which.min(res$padj))
+
+```
+
+
+### 2. Volcano Plot
+
+
+```{r}
+res <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
+
+plot_volcano = function (res, padj_cutoff, nlabel = 10, label.by = "padj"){
+  res <- mutate(res, significance=ifelse(res$padj<padj_cutoff, paste0("padj < ", padj_cutoff), paste0("padj > ", padj_cutoff)))
+  res = res[!is.na(res$significance),]
+  significant_genes <- res %>% filter(significance == paste0("padj < ", padj_cutoff))
+  
+  if (label.by == "padj") {
+    top_genes <- significant_genes %>% arrange(padj) %>% head(nlabel)
+    bottom_genes <- significant_genes %>% filter (log2FoldChange < 0) %>% arrange(padj) %>% head (nlabel)
+  } else if (label.by == "log2FoldChange") {
+    top_genes <- head(arrange(significant_genes, desc(log2FoldChange)),nlabel)
+    bottom_genes <- head(arrange(significant_genes, log2FoldChange),nlabel)
+  } else
+    stop ("Invalid label.by argument. Choose either padj or log2FoldChange.")
+  
+  ggplot(res, aes(log2FoldChange, -log(padj))) +
+    geom_point(aes(col=significance)) + 
+    scale_color_manual(values=c("red", "black")) + 
+    geom_text_repel(data=top_genes, aes(label=head(Gene.name,nlabel)), size = 3)+
+    geom_text_repel(data=bottom_genes, aes(label=head(Gene.name,nlabel)), color = "#619CFF", size = 3)+
+    labs ( x = "Log2FoldChange", y = "-(Log normalized p-value)")+
+    geom_vline(xintercept = 0, linetype = "dotted")+
+    theme_minimal()
+}
+
+plot_volcano(res, 0.0005, nlabel = 20, label.by = "padj")
+plot_volcano(res, 0.0005, nlabel = 10, label.by = "log2FoldChange")
+
+
+```
+
+### 3. Differential gene heatmap
+
+Take the top 50 DE genes from res object and then plot a heatmap using the normalized expression values (can extract from the csv file - filtered first by padj and then ranked by log2fc)
 
 ```{r}
 DE_gene_heatmap <- function(res, padj_cutoff = 0.0001, ngenes = 20) {
@@ -617,7 +719,6 @@ DE_gene_heatmap <- function(res, padj_cutoff = 0.0001, ngenes = 20) {
 DE_gene_heatmap(res, 0.001, 30)
 
 ```
-
 
 
 
