@@ -1,4 +1,6 @@
 *.nb.html
+*.csv
+/output
 /test_output
 /data
 .Rhistory

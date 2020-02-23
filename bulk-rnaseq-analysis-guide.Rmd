@@ -721,6 +721,56 @@ DE_gene_heatmap(res, 0.001, 30)
 ```
 
 
+### 4. LogFC comparison plot
+
+Compares the list of DE genes that are unique to comparison 1 vs comparison 2 vs shared by both comparisons
+
+
+```{r}
+res1 <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
+res2 <- read.csv ("PC3_Hypoxia_vs_PC3_Normoxia_allgenes.csv", header = T)
+
+compare_significant_genes <- function (res1, res2, padj_cutoff=0.0001, ngenes=250, nlabel=10, samplenames=c("comparison1", "comparison2"), title = "" ) {
+  # get list of most upregulated or downregulated genes for each results table
+  genes1 <- rbind(head(res1[which(res1$padj < padj_cutoff),], ngenes), tail(res1[which(res1$padj < padj_cutoff),], ngenes))
+  genes2 <- rbind(head(res2[which(res2$padj < padj_cutoff),], ngenes), tail(res2[which(res2$padj < padj_cutoff),], ngenes))
+  
+  # combine the data from both tables
+  de_union <- union(genes1$ensembl_id,genes2$ensembl_id)
+  res1_union <- res1[match(de_union, res1$ensembl_id),][c("ensembl_id", "log2FoldChange", "Gene.name")]
+  res2_union <- res2[match(de_union, res2$ensembl_id),][c("ensembl_id", "log2FoldChange", "Gene.name")]
+  combined <- left_join(res1_union, res2_union, by = "ensembl_id", suffix = samplenames )
+  
+  # identify overlap between genes in both tables
+  combined$de_condition <- 1 # makes a placeholder column
+  combined$de_condition[which(combined$ensembl_id %in% intersect(genes1$ensembl_id,genes2$ensembl_id))] <- "Significant in both"
+  combined$de_condition[which(combined$ensembl_id %in% setdiff(genes1$ensembl_id,genes2$ensembl_id))] <- paste0("Significant in ", samplenames[1])
+  combined$de_condition[which(combined$ensembl_id %in% setdiff(genes2$ensembl_id,genes1$ensembl_id))] <- paste0("Significant in ", samplenames[2])
+  combined[is.na(combined)] <- 0
+  
+  # find the top most genes within each condition to label on the graph
+  label1 <- rbind(head(combined[which(combined$de_condition==paste0("Significant in ", samplenames[1])),],nlabel),
+                  tail(combined[which(combined$de_condition==paste0("Significant in ", samplenames[1])),],nlabel))
+  label2 <- rbind(head(combined[which(combined$de_condition==paste0("Significant in ", samplenames[2])),],nlabel),
+                  tail(combined[which(combined$de_condition==paste0("Significant in ", samplenames[2])),],nlabel))
+  label3 <- rbind(head(combined[which(combined$de_condition=="Significant in both"),],nlabel),
+                  tail(combined[which(combined$de_condition=="Significant in both"),],nlabel))
+  combined_labels <- rbind(label1,label2,label3)
+  
+  # plot the genes based on log2FoldChange, color coded by significance
+  ggplot(combined, aes_string(x = paste0("log2FoldChange", samplenames[1]), y = paste0("log2FoldChange", samplenames[2]) )) +
+      geom_point(aes(color = de_condition), size = 0.7)+
+      scale_color_manual(values= c("#00BA38", "#619CFF", "#F8766D"))+
+      geom_text_repel(data= combined_labels, aes_string(label=paste0("Gene.name", samplenames[1]), color = "de_condition"), show.legend = F, size=3)+
+      geom_vline(xintercept = c(0,0), size = 0.3, linetype = 2)+ 
+      geom_hline(yintercept = c(0,0), size = 0.3, linetype = 2)+
+      labs(title = title,x = paste0("log2FoldChange in ", samplenames[1]), y = paste0("log2FoldChange in ", samplenames[2]))+
+      theme_minimal()+
+      theme(legend.title = element_blank())
+}
+
+compare_significant_genes(res1,res2, samplenames = c("LNCaP", "PC3"), title = "Hypoxia-induced gene expression differences in LNCaP vs PC3 cells")  
+```
 
 
 
