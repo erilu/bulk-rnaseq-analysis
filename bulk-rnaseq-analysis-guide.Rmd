@@ -772,6 +772,103 @@ compare_significant_genes <- function (res1, res2, padj_cutoff=0.0001, ngenes=25
 compare_significant_genes(res1,res2, samplenames = c("LNCaP", "PC3"), title = "Hypoxia-induced gene expression differences in LNCaP vs PC3 cells")  
 ```
 
+### 5. Gene set enrichment analysis (GSEA)
+
+Gene Set Enrichment Analysis (GSEA) can be used to test whether pathways consisting of a collection of multiple genes are enriched in one group compared to another. For example, there is a "gene set" of 200 genes that compose the hypoxia pathway. Although one specific gene in the pathway may not be statistically significant in your differential gene expression analysis, the pathway composed of all of the genes could be significantly enriched.
+
+GSEA is useful if there are only subtle changes in your dataset, and you want to determine if groups of genes as a collective are significantly altered. For this particular analysis, we would like to determine whether the genes associated with the hypoxia pathway are upregulated in the hypoxia condition, as a way to check that the experiment was performed correctly.
+
+To perform GSEA, we have to rank every gene available in terms of how much higher or lower it is in group A vs group B. This is called a ranked list file, and we have already generated one in the above section using the function `generate_DE_results()`. Then, we plug this list of genes into either the GSEA application from the Broad Institute (https://www.gsea-msigdb.org/gsea/index.jsp), or into the R package ```fgsea``` from Bioconductor (https://bioconductor.org/packages/release/bioc/html/fgsea.html). If you choose to use the GSEA application rather than the R package, the rank files have to be in a very specific format. The genes must be all upper-case, and there can only be a column for the gene name and its corresponding average log-foldchange. Below is some code that will generate rank files that can be used in either application.
+
+To use the R package `fgsea`, you can install using the commands:
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("fgsea")
+```
+
+We also have to download the pathway files from the GSEA MSigDB webpage at: https://www.gsea-msigdb.org/gsea/msigdb/collections.jsp and load them in using ```fgsea::gmtPathways```. A commonly-used set of pathways is the HALLMARK pathway set, which I will use below.
+
+```{r message=F, warning=F}
+library(fgsea)
+# read in file containing lists of genes for each pathway
+hallmark_pathway <- gmtPathways("h.all.v7.0.symbols.gmt.txt")
+head(names(hallmark_pathway))
+```
+
+Then, we have to turn our ranked list into a vector in which the log2FoldChange value is named with the gene name, as well as get rid of any NA values or duplicate gene entries.
+
+```{r}
+# load the ranked list
+lncap_ranked_list <- read.table("LNCAP_Hypoxia_vs_LNCAP_Normoxia_rank.rnk", header = T, stringsAsFactors = F)
+lncap_ranked_list
+
+# formats the ranked list for the fgsea() function
+prepare_ranked_list <- function(ranked_list) { 
+  # if duplicate gene names present, average the values
+  if( sum(duplicated(ranked_list$Gene.name)) > 0) {
+    ranked_list <- aggregate(.~Gene.name, FUN = mean, data = ranked_list)
+    ranked_list <- ranked_list[order(ranked_list$log2FoldChange, decreasing = T),]
+  }
+  # omit rows with NA values
+  ranked_list <- na.omit(ranked_list)
+  # turn the dataframe into a named vector
+  ranked_list <- tibble::deframe(ranked_list)
+  ranked_list
+}
+
+lncap_ranked_list <- prepare_ranked_list(lncap_ranked_list)
+head(lncap_ranked_list)
+```
+
+Now that we have the named vector, we can plug it into the fgsea() function along with the hallmark pathways object. This will generate a table of results containing the enrichment scores associated with each pathway.
+
+```{r}
+# generate GSEA result table using fgsea() by inputting the pathway list and ranked list
+fgsea_results <- fgsea(pathways = hallmark_pathway,
+                  stats = lncap_ranked_list,
+                  minSize = 15,
+                  maxSize = 500,
+                  nperm= 1000)
+
+fgsea_results %>% arrange (desc(NES)) %>% select (pathway, padj, NES) %>% head()
+```
+
+The normalized enrichment scores (NES) tell us how much higher the pathway is in the Hypoxia samples vs the Normoxia samples. In this case, we observe that the most enriched pathway in response to hypoxia, as expected, is the HALLMARK_HYPOXIA pathway.
+
+In order to visualize the enrichment level and p-values for each pathway, we can construct a "waterfall" plot, which is a sideways bar plot of normalized enrichment scores for each of the pathways. The significantly enriched pathways are highlighted in a different color.
+
+```{r}
+waterfall_plot <- function (fsgea_results, graph_title) {
+  fgsea_results %>% 
+    mutate(short_name = str_split_fixed(pathway, "_",2)[,2])%>%
+    ggplot( aes(reorder(short_name,NES), NES)) +
+      geom_bar(stat= "identity", aes(fill = padj<0.05))+
+      coord_flip()+
+      labs(x = "Hallmark Pathway", y = "Normalized Enrichment Score", title = graph_title)+
+      theme(axis.text.y = element_text(size = 7), 
+            plot.title = element_text(hjust = 1))
+}
+
+waterfall_plot(fgsea_results, "Hallmark pathways altered by hypoxia in LNCaP cells")
+```
+
+Using this visualization, it is easy to quickly identify the significantly enriched pathways. Again, we observe that hypoxia is the most enriched pathway in hypoxic LNCaP cells. The androgen response and MTORC1 signaling also appear to be significantly enriched in hypoxic conditions. Interestingly the interfereon gamma and interfereon alpha response pathways are both greatly negatively enriched in hypoxic conditions, suggesting that the signaling pathways associated with these reponses are shut down compared to cells grown in normoxic conditions.
+
+We can narrow in on specific pathways of interest. Another way to visualize the enrichment score is using an "enrichment curve", which we can plot using ```fgsea::plotEnrichment()```. In these plots, the black ticks on the x-axis indicate a gene in the pathway, and the green curve is a measure of how enriched the genes are for either the Hypoxia group (left side) or the Normoxia group (right side). An example of pathways highly enriched in either the Hypoxia or Normoxia groups are below.
+
+```{r}
+# wrapper for fgsea::plotEnrichment()
+plot_enrichment <- function (geneset, pathway, ranked_list) {
+  plotEnrichment(geneset[[pathway]], ranked_list)+labs (title = pathway)
+}
+# example of positively enriched pathway (up in Hypoxia)
+plot_enrichment(hallmark_pathway,"HALLMARK_HYPOXIA", lncap_ranked_list)
+plot_enrichment(hallmark_pathway, "HALLMARK_GLYCOLYSIS" , lncap_ranked_list)
+# example of negatively enriched pathway (up in Normoxia)
+plot_enrichment(hallmark_pathway, "HALLMARK_OXIDATIVE_PHOSPHORYLATION" , lncap_ranked_list)
+```
 
 
 ## Conclusion
