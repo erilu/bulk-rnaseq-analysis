@@ -237,7 +237,7 @@ The first column corresponds to the ensembl gene ID, and columns 2, 3, and 4 cor
 
 Looking at the sample information at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM3145522, we see that the TruSeq® Stranded mRNA Library Prep Kit (RS-122-2101, Illumina) was used to prepare the samples. Since this is a stranded library prep kit, we must select from column 3 or 4. Looking at the output, we observe that column 4 contains the reads whereas column 3 does not. We will proceed with using column 4 from each of the samples for downstream analysis.
 
-### combining read counts from each sample
+### Selecting read counts by sample
 
 There is an folder for each one of our samples. We need to combine column 4 in `ReadsPerGene.out.tab` for each of the samples into one data file. To do so, we can loop through each of the `ReadsPerGene.out.tab` files in Python and extract information from the column corresponding to the correct strand using the code below.
 
@@ -285,7 +285,7 @@ with open("raw_counts.csv", "wt") as counts_file, open("qc.csv", "wt") as qc_fil
 
 The code outputs a file called `raw_counts.csv`, with 9 columns. The first column is the Ensembl ID of each of the genes in the transcriptome. The rest of the columns correspond to the counts per gene for the 8 samples. Another file named `qc.csv` is created containing the qc metrics that were at the beginning of the `ReadsPerGene.out.tab` file for each sample.
 
-## Performing Differential Gene Expression Analysis
+## Performing differential gene expression analysis
 
 DESeq2 explanation: in order to perform differential gene analysis using the R package DESeq2, from bioconductor. 
 
@@ -478,7 +478,7 @@ plotHeatmap(vsd, num_genes = 100, annotation = human_annotation)
 
 ```
 
-### Create individual dds objects
+### Examine subsetted dds objects
 
 Because a lot of the variability in the data is due to the cell line difference, and because the biological comparisons that we want to make are only within either LNCaP, we will create an individual dds object for just LNCaP samples and and just the PC3 samples. The function generate_DESeq_object() below will make a dds object using your raw counts data and the groups that you want to compare. So far, this function can only do groups of 2. It will select the columns out from the raw data that match the group designations using `grep()`, build the colData matrix based on your group designations and the samples it selected, then generate and process the dds object using `DESeqDataSetFromMatrix()` and `DESeq()`.
 
@@ -520,9 +520,7 @@ plotHeatmap(lncap_vsd, 50, annotation = human_annotation)
 plotHeatmap(pc3_vsd, 50, annotation = human_annotation)
 ```
 
-
-
-### extract results from dds object
+## Extracting results from dds object
 
 ```{r}
 generate_DE_results <- function (dds, comparisons, fdrcutoff = 0.001, rawpcutoff = 0.001, log2cutoff = 0.5, cpmcutoff = 2) {
@@ -588,9 +586,9 @@ lncap_output
 pc3_output
 ```
 
-### exploring the results ouptut
+### Understanding the results ouptut
 
-Explain column by column and how we got it from the above code
+Explain column by column and how we got it from the above code in run_DE()
 
 ```{r}
 res <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
@@ -598,35 +596,42 @@ res
 ```
 
 
-## Visualizations
+## Visualizations: results
 
-### 1. PlotCounts (Upgraded)
+Now that we have extracted the results from our DESeq2 object, we can start visualizing the differentially expressed genes. In this section, I will showcase some plotting functions that I wrote to answer questions such as:
+
+1. 
+2. 
+3. 
+4.
+5.
+
+### 1. PlotCounts (upgraded)
 
 The built-in plotCounts function in DESeq2 leaves a lot to be desired:
-
 
 ```{r}
 plotCounts(dds, gene=which.min(res$padj), intgroup="condition")
 
 ```
 
-We can extract the data using `returnData = T`, and plot it using ggplot2:
+We can extract the data by setting `returnData = TRUE`, and plot the raw data in a ggplot instead:
 
 ```{r}
-
-
 d <- plotCounts(dds, gene=which.min(res$padj), intgroup="condition", 
                 returnData=TRUE)
 d
 ggplot(d, aes(x=condition, y=count)) + 
   geom_point(position=position_jitter(w=0.1,h=0), aes (color = condition)) + 
   scale_y_log10(breaks=c(25,100,400))
-
 ```
 
-But even this function is hard to work with, since we have to input the ensembl id instead of a gene name. As a researcher, we typically want to search by gene name, and this forces us to look up the ensembl genes each time. To work around this, I re-wrote plotCounts to accept either the gene name, ensembl id, or an index such as the example with which.min(res$padj), below. I also provide two ways to normalize the data - counts per million or the built-in DESeq2 normalized counts.
+However, this is still frustrating to work with, since we have to input the ensembl id instead of a gene name. Researchers will typically want to search by gene name, and this function forces us to look up the ensembl genes each time. To work around this, I wrote my own function `plot_counts()` to accept either the gene name, ensembl id, or an index such as `which.min(res$padj)`. I also provide two ways to normalize the data: by counts per million (cpm) or using the built-in DESeq2 normalized counts.
 
 ```{r}
+# read in the annotation file
+annotation <- read.csv("GRCh38.p13_annotation.csv", header = T, stringsAsFactors = F)
+
 plot_counts <- function (dds, gene, normalization = "DESeq2"){
   if (normalization == "cpm") {
     normalized_data <- cpm(counts(dds, normalized = F)) # normalize the raw data by counts per million
@@ -661,12 +666,11 @@ plot_counts <- function (dds, gene, normalization = "DESeq2"){
 plot_counts(dds, "GSTA1")
 plot_counts(dds, "ENSG00000000419")
 plot_counts(dds, gene = which.min(res$padj))
-
 ```
 
+We observe that 
 
 ### 2. Volcano Plot
-
 
 ```{r}
 res <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
@@ -696,9 +700,6 @@ plot_volcano = function (res, padj_cutoff, nlabel = 10, label.by = "padj"){
 }
 
 plot_volcano(res, 0.0005, nlabel = 20, label.by = "padj")
-plot_volcano(res, 0.0005, nlabel = 10, label.by = "log2FoldChange")
-
-
 ```
 
 ### 3. Differential gene heatmap
@@ -723,8 +724,12 @@ DE_gene_heatmap(res, 0.001, 30)
 
 ### 4. LogFC comparison plot
 
-Compares the list of DE genes that are unique to comparison 1 vs comparison 2 vs shared by both comparisons
+Given that we have performed differential gene expression analysis on two different cell lines, we would like to compare the two lines in terms of how their gene expression responds to hypoxia. We can ask questions such as:
 
+1. Are the genes that are induced by hypoxia similar in both cell lines?
+2. Which genes are shared and which genes are unique to each cell line?
+
+To do so, we can take the significant genes from the Hypoxia_vs_Normoxia comparison for both lines and generate a scatterplot of their log2FoldChange values using the function below, `compare_significant_genes()`. This function will also assess the overlap in the gene lists, color coding the points by those that are significantly different in both cell lines, as well as those that are unique to each individual cell line.
 
 ```{r}
 res1 <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
@@ -772,13 +777,15 @@ compare_significant_genes <- function (res1, res2, padj_cutoff=0.0001, ngenes=25
 compare_significant_genes(res1,res2, samplenames = c("LNCaP", "PC3"), title = "Hypoxia-induced gene expression differences in LNCaP vs PC3 cells")  
 ```
 
+We observe that there are indeed a small subset of genes that are differentially expressed in both the LNCaP as well as PC3 comparisons (green labels). It is satisfying to see the majority of these shared genes fall along the x = y diagonal. For example, genes such as CA9, IGFBP5, STC1, and PPFIA4 are greatly induced by hypoxia in both lines. These genes are more likely to be real indicators of the hypoxia response. In contrast, the genes that are significant in only one condition lie for the most part on the vertical or horizontal axis. These genes are likely to be responses specific to the background of the cell line, and not universal indicators of hypoxia.
+
 ### 5. Gene set enrichment analysis (GSEA)
 
 Gene Set Enrichment Analysis (GSEA) can be used to test whether pathways consisting of a collection of multiple genes are enriched in one group compared to another. For example, there is a "gene set" of 200 genes that compose the hypoxia pathway. Although one specific gene in the pathway may not be statistically significant in your differential gene expression analysis, the pathway composed of all of the genes could be significantly enriched.
 
 GSEA is useful if there are only subtle changes in your dataset, and you want to determine if groups of genes as a collective are significantly altered. For this particular analysis, we would like to determine whether the genes associated with the hypoxia pathway are upregulated in the hypoxia condition, as a way to check that the experiment was performed correctly.
 
-To perform GSEA, we have to rank every gene available in terms of how much higher or lower it is in group A vs group B. This is called a ranked list file, and we have already generated one in the above section using the function `generate_DE_results()`. Then, we plug this list of genes into either the GSEA application from the Broad Institute (https://www.gsea-msigdb.org/gsea/index.jsp), or into the R package ```fgsea``` from Bioconductor (https://bioconductor.org/packages/release/bioc/html/fgsea.html). If you choose to use the GSEA application rather than the R package, the rank files have to be in a very specific format. The genes must be all upper-case, and there can only be a column for the gene name and its corresponding average log-foldchange. Below is some code that will generate rank files that can be used in either application.
+To perform GSEA, we have to rank every gene available in terms of how much higher or lower it is in group A vs group B. This is called a ranked list file, and we have already generated one in the above section using the function `generate_DE_results()`. Then, we plug this list of genes into either the GSEA application from the Broad Institute (https://www.gsea-msigdb.org/gsea/index.jsp), or into the R package `fgsea` from Bioconductor (https://bioconductor.org/packages/release/bioc/html/fgsea.html). If you choose to use the GSEA application rather than the R package, the rank files have to be in a very specific format. The genes must be all upper-case, and there can only be a column for the gene name and its corresponding average log-foldchange. Below is some code that will generate rank files that can be used in either application.
 
 To use the R package `fgsea`, you can install using the commands:
 
@@ -788,7 +795,7 @@ if (!requireNamespace("BiocManager", quietly = TRUE))
 BiocManager::install("fgsea")
 ```
 
-We also have to download the pathway files from the GSEA MSigDB webpage at: https://www.gsea-msigdb.org/gsea/msigdb/collections.jsp and load them in using ```fgsea::gmtPathways```. A commonly-used set of pathways is the HALLMARK pathway set, which I will use below.
+We also have to download the pathway files from the GSEA MSigDB webpage at: https://www.gsea-msigdb.org/gsea/msigdb/collections.jsp and load them in using `fgsea::gmtPathways`. A commonly-used set of pathways is the HALLMARK pathway set, which I will use below.
 
 ```{r message=F, warning=F}
 library(fgsea)
@@ -822,7 +829,7 @@ lncap_ranked_list <- prepare_ranked_list(lncap_ranked_list)
 head(lncap_ranked_list)
 ```
 
-Now that we have the named vector, we can plug it into the fgsea() function along with the hallmark pathways object. This will generate a table of results containing the enrichment scores associated with each pathway.
+Now that we have the named vector, we can plug it into the `fgsea()` function along with the hallmark pathways object. This will generate a table of results containing the enrichment scores associated with each pathway.
 
 ```{r}
 # generate GSEA result table using fgsea() by inputting the pathway list and ranked list
@@ -837,7 +844,7 @@ fgsea_results %>% arrange (desc(NES)) %>% select (pathway, padj, NES) %>% head()
 
 The normalized enrichment scores (NES) tell us how much higher the pathway is in the Hypoxia samples vs the Normoxia samples. In this case, we observe that the most enriched pathway in response to hypoxia, as expected, is the HALLMARK_HYPOXIA pathway.
 
-In order to visualize the enrichment level and p-values for each pathway, we can construct a "waterfall" plot, which is a sideways bar plot of normalized enrichment scores for each of the pathways. The significantly enriched pathways are highlighted in a different color.
+We can visualize the statistics for each pathway using a "waterfall" plot, which is a sideways bar plot of normalized enrichment scores for each of the pathways color coded by significance:
 
 ```{r}
 waterfall_plot <- function (fsgea_results, graph_title) {
@@ -854,9 +861,11 @@ waterfall_plot <- function (fsgea_results, graph_title) {
 waterfall_plot(fgsea_results, "Hallmark pathways altered by hypoxia in LNCaP cells")
 ```
 
-Using this visualization, it is easy to quickly identify the significantly enriched pathways. Again, we observe that hypoxia is the most enriched pathway in hypoxic LNCaP cells. The androgen response and MTORC1 signaling also appear to be significantly enriched in hypoxic conditions. Interestingly the interfereon gamma and interfereon alpha response pathways are both greatly negatively enriched in hypoxic conditions, suggesting that the signaling pathways associated with these reponses are shut down compared to cells grown in normoxic conditions.
+We observe that, in addition to the hypoxia pathway, the androgen response and MTORC1 signaling pathways also appear to be significantly enriched in hypoxic conditions. Interesting metabolic changes are also occuring. Similar to the Warburg effect, we observe that the glycolysis pathway is greatly enriched in the Hypoxia condition, and that oxidative phosphorylation is negatively enriched. Since tumors become progressively hypoxic during cancer progression, it is possible that the hypoxic conditions are a driver of the switch from oxidative phosphorylation to glycolysis as an energy source.
 
-We can narrow in on specific pathways of interest. Another way to visualize the enrichment score is using an "enrichment curve", which we can plot using ```fgsea::plotEnrichment()```. In these plots, the black ticks on the x-axis indicate a gene in the pathway, and the green curve is a measure of how enriched the genes are for either the Hypoxia group (left side) or the Normoxia group (right side). An example of pathways highly enriched in either the Hypoxia or Normoxia groups are below.
+Interestingly, the interferon response pathways are both negatively enriched in hypoxic conditions, suggesting that hypoxic cells may be less able to respond to interferons. Given that the cells were cultured in vitro, in an environment where interferons are probably not present, this result is unexpected. This plot is great for quickly identifying the significantly enriched pathways. 
+
+We can also narrow in on specific pathways of interest by plotting "enrichment curves" using the function `fgsea::plotEnrichment()`. In these plots, the black ticks on the x-axis indicate a gene in the pathway, and the green curve is a measure of how enriched the genes are for either the Hypoxia group (left side) or the Normoxia group (right side). An example of pathways highly enriched in either the Hypoxia or Normoxia groups are shown below.
 
 ```{r}
 # wrapper for fgsea::plotEnrichment()
@@ -866,9 +875,10 @@ plot_enrichment <- function (geneset, pathway, ranked_list) {
 # example of positively enriched pathway (up in Hypoxia)
 plot_enrichment(hallmark_pathway,"HALLMARK_HYPOXIA", lncap_ranked_list)
 plot_enrichment(hallmark_pathway, "HALLMARK_GLYCOLYSIS" , lncap_ranked_list)
-# example of negatively enriched pathway (up in Normoxia)
+# example of negatively enriched pathway (down in Hypoxia)
 plot_enrichment(hallmark_pathway, "HALLMARK_OXIDATIVE_PHOSPHORYLATION" , lncap_ranked_list)
 ```
 
-
 ## Conclusion
+
+
