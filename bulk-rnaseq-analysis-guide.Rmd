@@ -595,44 +595,42 @@ res <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
 res
 ```
 
-
-## Visualizations: results
+## Visualizations for DE results
 
 Now that we have extracted the results from our DESeq2 object, we can start visualizing the differentially expressed genes. In this section, I will showcase some plotting functions that I wrote to answer questions such as:
 
-1. 
-2. 
-3. 
-4.
-5.
+1. How is a given gene of interest expressed across groups?
+2. What is the sample to sample variability for the top differentially expressed genes?
+3. Are there more significantly upregulated or downregulated genes?
+4. If we are doing multiple comparisons, which differentially expressed genes are shared?
+5. What gene pathways are enriched in one group vs another?
 
 ### 1. PlotCounts (upgraded)
 
-The built-in plotCounts function in DESeq2 leaves a lot to be desired:
+We are often interested in plotting the normalized counts for certain genes of interest, in order to get a sense of the spread of the data and how genes are expressed accross each of the groups. This is especially of interest for genes that show up as differentially expressed in our DESeq results. A way to plot the normalized counts for each sample is by using the built-in `DESeq2::plotCounts()` function. However, this function leaves *a lot* to be desired.  As an example, I plot the gene IGFBP1 (a hypoxia-inducible gene) using its ensembl id below.
 
 ```{r}
-plotCounts(dds, gene=which.min(res$padj), intgroup="condition")
-
+plotCounts(dds, gene="ENSG00000146678", intgroup="condition")
 ```
 
-We can extract the data by setting `returnData = TRUE`, and plot the raw data in a ggplot instead:
+As you can see, the sample names aren't even all displayed if their names are too long. We can instead use ggplot2 to graph the data, by extract the normalized counts using `returnData = TRUE`:
 
 ```{r}
-d <- plotCounts(dds, gene=which.min(res$padj), intgroup="condition", 
-                returnData=TRUE)
+d <- plotCounts(dds, gene="ENSG00000146678", intgroup="condition", returnData=TRUE)
 d
 ggplot(d, aes(x=condition, y=count)) + 
   geom_point(position=position_jitter(w=0.1,h=0), aes (color = condition)) + 
   scale_y_log10(breaks=c(25,100,400))
 ```
 
-However, this is still frustrating to work with, since we have to input the ensembl id instead of a gene name. Researchers will typically want to search by gene name, and this function forces us to look up the ensembl genes each time. To work around this, I wrote my own function `plot_counts()` to accept either the gene name, ensembl id, or an index such as `which.min(res$padj)`. I also provide two ways to normalize the data: by counts per million (cpm) or using the built-in DESeq2 normalized counts.
+However, this is still very frustrating to work with, since we have to input the ensembl id instead of a gene name. Researchers typically want to search by gene name, and this function forces us to look up the ensembl id each time. To solve this problem, I wrote my own function `plot_counts()` to accept either the gene name, ensembl id, or an index such as `which.min(res$padj)`. I also provide two ways to normalize the data: by counts per million (cpm) or using the built-in DESeq2 normalized counts.
 
 ```{r}
-# read in the annotation file
-annotation <- read.csv("GRCh38.p13_annotation.csv", header = T, stringsAsFactors = F)
 
 plot_counts <- function (dds, gene, normalization = "DESeq2"){
+  # read in the annotation file
+  annotation <- read.csv("GRCh38.p13_annotation.csv", header = T, stringsAsFactors = F)
+  # obtain normalized data
   if (normalization == "cpm") {
     normalized_data <- cpm(counts(dds, normalized = F)) # normalize the raw data by counts per million
   } else if (normalization == "DESeq2")
@@ -663,23 +661,49 @@ plot_counts <- function (dds, gene, normalization = "DESeq2"){
     theme(axis.text.x = element_text(size = 11), axis.text.y = element_text(size = 11))
 }
 
-plot_counts(dds, "GSTA1")
-plot_counts(dds, "ENSG00000000419")
-plot_counts(dds, gene = which.min(res$padj))
+plot_counts(dds, "IGFBP1")
 ```
 
-We observe that 
+We observe that IGFBP1 is elevated in the the hypoxia conditions relative to their respective Normoxia controls. Interestingly, the upregulation of IGFBP1 is much higher in the PC3 cells than in the LNCaP cells. This is a nice example of how this plot is useful to determine relative expression levels between samples.
 
-### 2. Volcano Plot
+### 2. Differential gene heatmap
+
+The most commonly-used heatmap used to display RNA-seq results is the differential gene heatmap. This is a heatmap where the normalized values for each sample are plotted for the top N most upregulated genes which are significantly different between the comparison groups. Starting from the results object, we first filter the results by padj and then take the genes which have the greatest log2FoldChange value. The normalized counts for each gene is scaled by row in order to emphasize the difference between the comparison groups (Hypoxia vs Normoxia). The purpose of this visualization is to give a sense of how variable the data are from sample to sample, as well as to quickly examine what the top N genes are from the results. The custom function `DE_gene_heatmap()` below generates this plot using `pheatmap::pheatmap()` with the `scale = "row"` argument.
+
+```{r}
+res <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
+
+DE_gene_heatmap <- function(res, padj_cutoff = 0.0001, ngenes = 20) {
+  # generate the color palette
+  brewer_palette <- "RdBu"
+  ramp <- colorRampPalette(RColorBrewer::brewer.pal(11, brewer_palette))
+  mr <- ramp(256)[256:1]
+  # obtain the significant genes and order by log2FoldChange
+  significant_genes <- res %>% filter(padj < padj_cutoff) %>% arrange (desc(log2FoldChange)) %>% head (ngenes)
+  heatmap_values <- as.matrix(significant_genes[,-c(1:8)])
+  rownames(heatmap_values) <- significant_genes$Gene.name
+  # plot the heatmap using pheatmap
+  pheatmap::pheatmap(heatmap_values, color = mr, scale = "row", fontsize_col = 10, fontsize_row = 200/ngenes, fontsize = 5, border_color = NA)
+}
+DE_gene_heatmap(res, 0.001, 30)
+```
+
+We observe that the sample to sample variablity is very consistent within groups. We do observe that LNCAP_Hypoxia_S1 has slightly more elevated expression of the top ~10 genes than LNCAP_Hypoxia_S2.
+
+### 3. Volcano Plot
+
+Another common visualization for bulk RNA-seq results is the volcano plot, which is a scatterplot that displays the log2FoldChange value vs the -log(padj) value for each gene in the given comparison. We can use this plot to quickly identify genes that are highly upregulated or downregulated, or genes that have highly significant p-values. Below is code for `plot_volcano()`, as well as an example showing the most significant genes in the Hypoxia vs Normoxia comparison for LNCaP cells.
 
 ```{r}
 res <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
 
 plot_volcano = function (res, padj_cutoff, nlabel = 10, label.by = "padj"){
+  # assign significance to results based on padj
   res <- mutate(res, significance=ifelse(res$padj<padj_cutoff, paste0("padj < ", padj_cutoff), paste0("padj > ", padj_cutoff)))
   res = res[!is.na(res$significance),]
   significant_genes <- res %>% filter(significance == paste0("padj < ", padj_cutoff))
   
+  # get labels for the highest or lowest genes according to either padj or log2FoldChange
   if (label.by == "padj") {
     top_genes <- significant_genes %>% arrange(padj) %>% head(nlabel)
     bottom_genes <- significant_genes %>% filter (log2FoldChange < 0) %>% arrange(padj) %>% head (nlabel)
@@ -692,42 +716,24 @@ plot_volcano = function (res, padj_cutoff, nlabel = 10, label.by = "padj"){
   ggplot(res, aes(log2FoldChange, -log(padj))) +
     geom_point(aes(col=significance)) + 
     scale_color_manual(values=c("red", "black")) + 
-    geom_text_repel(data=top_genes, aes(label=head(Gene.name,nlabel)), size = 3)+
-    geom_text_repel(data=bottom_genes, aes(label=head(Gene.name,nlabel)), color = "#619CFF", size = 3)+
+    ggrepel::geom_text_repel(data=top_genes, aes(label=head(Gene.name,nlabel)), size = 3)+
+    ggrepel::geom_text_repel(data=bottom_genes, aes(label=head(Gene.name,nlabel)), color = "#619CFF", size = 3)+
     labs ( x = "Log2FoldChange", y = "-(Log normalized p-value)")+
     geom_vline(xintercept = 0, linetype = "dotted")+
     theme_minimal()
 }
 
-plot_volcano(res, 0.0005, nlabel = 20, label.by = "padj")
+plot_volcano(res, 0.0005, nlabel = 15, label.by = "padj")
 ```
 
-### 3. Differential gene heatmap
+The downregulated genes are labeled in a different color compared to the upregulated genes. We observe that there are a lot more significantly upregulated genes than there are downregulated genes. Given that we are looking for gene expression changes in cells grown in hypoxic conditions compared to normoxic conditions, this suggests that cells may be ramping up transcription of response pathways.
 
-Take the top 50 DE genes from res object and then plot a heatmap using the normalized expression values (can extract from the csv file - filtered first by padj and then ranked by log2fc)
-
-```{r}
-DE_gene_heatmap <- function(res, padj_cutoff = 0.0001, ngenes = 20) {
-  brewer_palette <- "RdBu"
-  # Ramp the color in order to get the scale.
-  ramp <- colorRampPalette(brewer.pal(11, brewer_palette))
-  mr <- ramp(256)[256:1]
-  significant_genes <- res %>% filter(padj < padj_cutoff) %>% arrange (desc(log2FoldChange)) %>% head (ngenes)
-  heatmap_values <- as.matrix(significant_genes[,-c(1:8)])
-  rownames(heatmap_values) <- significant_genes$Gene.name
-  pheatmap(heatmap_values, color = mr, scale = "row", fontsize_col = 10, fontsize_row = 200/ngenes, fontsize = 5, border_color = NA)
-}
-DE_gene_heatmap(res, 0.001, 30)
-
-```
-
-
-### 4. LogFC comparison plot
+### 4. LogFoldChange comparison plot
 
 Given that we have performed differential gene expression analysis on two different cell lines, we would like to compare the two lines in terms of how their gene expression responds to hypoxia. We can ask questions such as:
 
 1. Are the genes that are induced by hypoxia similar in both cell lines?
-2. Which genes are shared and which genes are unique to each cell line?
+2. Which significant genes are shared by both cell lines and which genes are unique to each cell line?
 
 To do so, we can take the significant genes from the Hypoxia_vs_Normoxia comparison for both lines and generate a scatterplot of their log2FoldChange values using the function below, `compare_significant_genes()`. This function will also assess the overlap in the gene lists, color coding the points by those that are significantly different in both cell lines, as well as those that are unique to each individual cell line.
 
@@ -739,8 +745,8 @@ compare_significant_genes <- function (res1, res2, padj_cutoff=0.0001, ngenes=25
   # get list of most upregulated or downregulated genes for each results table
   genes1 <- rbind(head(res1[which(res1$padj < padj_cutoff),], ngenes), tail(res1[which(res1$padj < padj_cutoff),], ngenes))
   genes2 <- rbind(head(res2[which(res2$padj < padj_cutoff),], ngenes), tail(res2[which(res2$padj < padj_cutoff),], ngenes))
-  
-  # combine the data from both tables
+ 
+   # combine the data from both tables
   de_union <- union(genes1$ensembl_id,genes2$ensembl_id)
   res1_union <- res1[match(de_union, res1$ensembl_id),][c("ensembl_id", "log2FoldChange", "Gene.name")]
   res2_union <- res2[match(de_union, res2$ensembl_id),][c("ensembl_id", "log2FoldChange", "Gene.name")]
@@ -766,7 +772,7 @@ compare_significant_genes <- function (res1, res2, padj_cutoff=0.0001, ngenes=25
   ggplot(combined, aes_string(x = paste0("log2FoldChange", samplenames[1]), y = paste0("log2FoldChange", samplenames[2]) )) +
       geom_point(aes(color = de_condition), size = 0.7)+
       scale_color_manual(values= c("#00BA38", "#619CFF", "#F8766D"))+
-      geom_text_repel(data= combined_labels, aes_string(label=paste0("Gene.name", samplenames[1]), color = "de_condition"), show.legend = F, size=3)+
+      ggrepel::geom_text_repel(data= combined_labels, aes_string(label=paste0("Gene.name", samplenames[1]), color = "de_condition"), show.legend = F, size=3)+
       geom_vline(xintercept = c(0,0), size = 0.3, linetype = 2)+ 
       geom_hline(yintercept = c(0,0), size = 0.3, linetype = 2)+
       labs(title = title,x = paste0("log2FoldChange in ", samplenames[1]), y = paste0("log2FoldChange in ", samplenames[2]))+
@@ -789,7 +795,7 @@ To perform GSEA, we have to rank every gene available in terms of how much highe
 
 To use the R package `fgsea`, you can install using the commands:
 
-```{r}
+```{r eval=F}
 if (!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
 BiocManager::install("fgsea")
@@ -832,7 +838,7 @@ head(lncap_ranked_list)
 Now that we have the named vector, we can plug it into the `fgsea()` function along with the hallmark pathways object. This will generate a table of results containing the enrichment scores associated with each pathway.
 
 ```{r}
-# generate GSEA result table using fgsea() by inputting the pathway list and ranked list
+# generate GSEA results table using fgsea() by inputting the pathway list and ranked list
 fgsea_results <- fgsea(pathways = hallmark_pathway,
                   stats = lncap_ranked_list,
                   minSize = 15,
@@ -849,7 +855,7 @@ We can visualize the statistics for each pathway using a "waterfall" plot, which
 ```{r}
 waterfall_plot <- function (fsgea_results, graph_title) {
   fgsea_results %>% 
-    mutate(short_name = str_split_fixed(pathway, "_",2)[,2])%>%
+    mutate(short_name = str_split_fixed(pathway, "_",2)[,2])%>% # removes 'HALLMARK_' from the pathway title 
     ggplot( aes(reorder(short_name,NES), NES)) +
       geom_bar(stat= "identity", aes(fill = padj<0.05))+
       coord_flip()+
@@ -880,5 +886,15 @@ plot_enrichment(hallmark_pathway, "HALLMARK_OXIDATIVE_PHOSPHORYLATION" , lncap_r
 ```
 
 ## Conclusion
+
+Here, I have shown you a complete bulk RNA-sequencing analysis pipeline, starting from downloading and processing the raw sequencing files all the way to creating visualizations for differentially expressed genes and pathways. From our analysis, we have observed that:
+
+1. LNCaP cells and PC3 cells differ vastly in their global gene expression profiles.
+2. However, both cell lines upregulates a shared set of genes under hypoxic conditions.
+3. Hypoxia upregulates genes associated with glycolysis and downregulates genes associated with oxidative phosphorylation, suggesting a metabolic switch is occuring.
+
+We have also generated differential expression gene lists for each cell line that can be explored for novel genes associated with the hypoxia response, as well as showcased several different types of visualizations that can be used to display and explore bulk RNA-sequencing data.
+
+I hope my analysis pipepline has helped you make sense of your bulk RNA-sequencing data. If you are also interested in learning about single-cell RNA-sequencing data analysis, I have a comprehensive guide written here. Thanks for reading!
 
 
