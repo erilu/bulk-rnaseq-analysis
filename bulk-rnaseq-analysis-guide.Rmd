@@ -287,11 +287,9 @@ The code outputs a file called `raw_counts.csv`, with 9 columns. The first colum
 
 ## Performing differential gene expression analysis
 
-DESeq2 explanation: in order to perform differential gene analysis using the R package DESeq2, from bioconductor. 
+In order to perform differential gene expression analysis, we will be using the R package `DESeq2`. This package provides a set of data normalization and processing tools designed specifically for bulk RNA-seq data and differential gene expression analysis. A great tutorial that goes into the nitty-gritty details of DESeq2 can be found here: https://www.bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html. In the sections below, I will use DESeq2 to determine the genes upregulated by hypoxia in both LNCaP and PC3 cells. I also provide custom functions and visualizations to streamline the analysis process and gain further insight into the data.
 
-A great tutorial that goes into the nitty-gritty details of this analysis can be found here: https://www.bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html. My analysis below is an example of the workflow that a scientist would use to analyze their RNA-seq data.
-
-Installing DESeq2:
+We can install `DESeq2` from Bioconductor using the following commands:
 
 ```{r eval=F}
 if (!requireNamespace("BiocManager", quietly = TRUE))
@@ -300,30 +298,97 @@ if (!requireNamespace("BiocManager", quietly = TRUE))
 BiocManager::install("DESeq2")
 ```
 
-### Loading data and packages
+Once installed, we will load the packages that are required for our analysis. The `tidyverse` will be used to wrangle gene lists and output from `DESeq2`, as well as to create visualizations.
 
-```{r}
+```{r message=F}
 library("DESeq2")
 library("tidyverse")
 ```
 
-We can now load `raw_counts.csv` into R, and take a look at the structure of the data
+We can now load `raw_counts.csv` into R, and take a look at the structure of the data:
 
 ```{r}
-data <- read.csv("raw_counts.csv", header = T)
+data <- read.csv("raw_counts.csv", header = T, row.names = "ensembl_id")
 data <- data[,sort(colnames(data))]
 head(data)
 ```
 
+We confirm that there are 60676 rows and 8 columns to the data, in which each row is a gene and each column corresponds to the reads per gene for each sample. We can quantify the total reads per sample by taking the column sums:
+
 ```{r}
-dim(data)
+colSums(data)
 ```
 
-We observe that there are 60676 rows and 9 columns to the data, in which each row is a gene and each column corresponds to the reads per gene for each sample. This is the format that is appropriate for the DESeq2 package. It would be nice to have each Ensembl ID translated into its gene name. We can build an annotation file using the BioMart at ensembl.org, which I'll explain in the following section.
+We observe that each sample has been sequenced at a different "depth", in which there are varying numbers of total reads for each sample. For example, PC3_Hypoxia_S2 has only 12 million reads, which is less than 1/3rd of the reads for PC3_Hypoxia_S1. This means that we cannot directly compare the counts values between samples without normalizing each column based on its total read count. After the data have been processed using `DESeq2`, we will have normalized data that we can use to make comparisons.
+
+### Creating the DESeq2 object
+
+To create the DESeq2 object, we can use the function `DESeqDataSetFromMatrix()`, which requires three items:
+
+1. `countData` - The data in the form of an integer matrix, in which the rownames correspond to the gene IDs. This is the `data` object that we created from `raw_counts.csv`.
+2. `colData` - A table that provides the sample groups to be compared. It should also assign each sample to a group (i.e. biological replicates).
+3. `design` - A formula that dictates how the counts for each gene depend on the variables in `colData`. We will use the groups defined in colData.
+
+To construct the colData, we first define the groups and how many samples should lie within each group:
+
+```{r}
+# identify biological replicates
+condition <- c(rep("LNCAP_Hypoxia", 2), rep("LNCAP_Normoxia", 2), rep("PC3_Hypoxia", 2), rep("PC3_Normoxia", 2))
+```
+
+Then, we assign individual sample names to the grouping categories by binding them within a data frame:
+
+```{r}
+# assign replicates to each sample name to construct colData
+my_colData <- as.data.frame(condition)
+rownames(my_colData) <- colnames(data)
+my_colData
+```
+
+The vector above named `condition` can be used for the `design` argument. Now that we have all the required inputs, we will create a DESeq2 object (usually named `dds`) using `DESeqDataSetFromMatrix()`:
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = data,
+							  colData = my_colData,
+							  design = ~condition)
+```
+
+This can then be processed using the function `DESeq()`, which will perform differential expression analysis based on a negative binomial distribution. From the [documentation](https://www.bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html), this function will perform:
+
+1. estimation of size factors: estimateSizeFactors
+2. estimation of dispersion: estimateDispersions
+3. Negative Binomial GLM fitting and Wald statistics: nbinomWaldTest
+
+```{r}
+dds <- DESeq(dds)
+```
+
+We can observe some basic information about the `dds` object just by calling its name:
+
+```{r}
+dds
+```
+
+We can also sift through the dds object using `@` and `$`. For example, we can find the raw counts data this way:
+
+```{r}
+head(dds@assays$data@listData$counts)
+```
+
+We can also find the raw counts from the dds object using the function `counts(dds, normalized = F)`. To obtain the normalized counts, we set `normalized = T`. For example:
+
+```{r}
+normalized_counts <- counts(dds, normalized = F)
+head(normalized_counts)
+```
+
+We can use the normalized counts to compare gene expression values from sample to sample.
 
 ### Making an annotation file from BioMart
 
-A genome annotation file wil let us map ensembl IDs to their gene names. To build one:
+Right now, each of the rownames corresponds to an Ensembl ID. It would be nice to have each Ensembl ID translated into its gene name, so that we can search the data for our gene of interest without having to look up the Ensembl ID each time. We will also need to know the gene names each ensembl ID when generating our downstream visualizations and differential gene lists.
+
+In order to map ensembl IDs to their gene names, we have to build a genome annotation file using the BioMart at ensembl.org using the following steps:
 
 1. First go to the ensembl BioMart at http://uswest.ensembl.org/biomart/martview/
 2. Choose the database to use, in this case "Ensembl Genes 99" or whatever is the current version
@@ -334,90 +399,41 @@ A genome annotation file wil let us map ensembl IDs to their gene names. To buil
 The annotation should download to your computer as "mart_export.txt". We can rename it to "GRCh38.p13_annotation.csv" read it into R:
 
 ```{r}
-human_annotation <- read.csv("GRCh38.p13_annotation.csv", header = T, stringsAsFactors = F)
-head(human_annotation)
+annotation <- read.csv("GRCh38.p13_annotation.csv", header = T, stringsAsFactors = F)
+head(annotation)
 ```
 
-We observe that there are two columns, one named "Gene.stable.ID" which is contains the ensembl IDs, and a second column named "Gene.name" which contains the gene names that we want to map to our `raw_counts.csv` file. To map the names, we can join the two tables based on the ensembl IDs using the `right_join()` function from the tidyverse.
+We observe that there are two columns, one named "Gene.stable.ID" which is contains the ensembl IDs, and a second column named "Gene.name" which contains the gene names that we want to map to our `raw_counts.csv` file. To map the names, we can join two tables based on the ensembl IDs using the `right_join()` function from the tidyverse. As an example, I add the annotation to our normalized counts table below:
 
 ```{r}
-annotated_data <- right_join(human_annotation, data, by = c("Gene.stable.ID" = "ensembl_id"))
-annotated_data
-write.csv(annotated_data, file = "gene_annotated_raw_counts.csv")
+normalized_counts <- rownames_to_column(as.data.frame(normalized_counts), var = "ensembl_id")
+annotated_data <- right_join(annotation, normalized_counts, by = c("Gene.stable.ID" = "ensembl_id"))
+head(annotated_data)
+
+# write.csv(annotated_data, file = "gene_annotated_normalized_counts.csv")
 ```
 
-### Creating the DESeq2 object
+We observe that the gene names are now placed directly next to the Ensembl IDs. We can export this normalized counts file to csv and provide it to collaborating scientists, and they will be able to quickly search for their genes of interest! For examples of how to plot the normalized counts for a given gene across samples, see the section [Visualizations for DE results].
 
-To create the DESeq2 object, we can use the function `DESeqDataSetFromMatrix`, which requires three items:
+## Visualizations for sample variability
 
-1. countData - The data in the form of an integer matrix, in which the rownames correspond to the gene IDs. 
-2. colData - A table that provides the sample groups and identifies which samples fall in each group (i.e. biological replicates).
-3. design - A formula that expressed how the counts for each gene depend on the variables in colData. Typically if you are just comparing between groups, we can use the groups defined in colData.
-
-```{r}
-# make a counts matrix in which rownames are ensembl ids
-my_countData <- column_to_rownames(data, "ensembl_id")
-
-# identify biological replicates
-condition <- c(rep("LNCAP_Hypoxia", 2), rep("LNCAP_Normoxia", 2), rep("PC3_Hypoxia", 2), rep("PC3_Normoxia", 2))
-
-# assign replicates to each sample name
-my_colData <- as.data.frame(condition)
-rownames(my_colData) <- colnames(data[,-1])
-my_colData
-```
-
-Now that we have these the required inputs, we can run `DESeqDataSetFromMatrix`
-
-```{r}
-dds <- DESeqDataSetFromMatrix(countData = my_countData,
-							  colData = my_colData,
-							  design = ~condition)
-```
-
-This can immediately be processed using the `DESeq()`, which will perform differential expression analysis based on a negative binomial distribution. From the documentation, this function will perform:
-
-1. estimation of size factors: estimateSizeFactors
-2. estimation of dispersion: estimateDispersions
-3. Negative Binomial GLM fitting and Wald statistics: nbinomWaldTest
-
-More information about what goes into this processing step can be found here: https://www.bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html
-
-```{r}
-dds <- DESeq(dds)
-```
-
-We can observe some basic information about the dds object just by calling its name:
-
-```{r}
-dds
-```
-
-We can also sift through the dds object using `@` and `$`. For example, we can find the raw counts data that was used to create the dds object at:
-
-```{r}
-head(dds@assays$data@listData$counts)
-```
-
-## Visualizations: sample variability
-
-At this point, we can start to assess sample to sample variability. DESeq2 has some built-in functions that can be used to do so, including distance plots and PCA plots. In order to use these functions, we first perform a variance stabilizing transformation on the data using `vst()`:
+At this point, we can start to assess sample-to-sample variability. This is important for assessing whether you have outliers in your dataset, as well as whether or not your data makes sense. For example, if you have biological/technical replicates, they should look fairly similar to one another. In this section, we will cover some functions that can be used for this purpose. In order to use these functions, we first perform a variance stabilizing transformation on the data using `vst()`:
 
 ```{r}
 vsd <- vst(dds, blind = TRUE)
 ```
 
-We can plug the variance stabilized object into the following functions:
-
 ### 1. Distance Plot
+
+The distance plot calculates the euclidean distance between the expression values for each individual sample. This is a way to identify which samples are most closely or differently related in terms of their gene expression pattern.
 
 ```{r}
 plotDists = function (vsd.obj) {
   sampleDists <- dist(t(assay(vsd.obj)))
   sampleDistMatrix <- as.matrix( sampleDists )
   rownames(sampleDistMatrix) <- paste( vsd.obj$condition )
-  colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
-  pheatmap(sampleDistMatrix,
+  colors <- colorRampPalette( rev(RColorBrewer::brewer.pal(9, "Blues")) )(255)
+  pheatmap::pheatmap(sampleDistMatrix,
            clustering_distance_rows = sampleDists,
            clustering_distance_cols = sampleDists,
            col = colors)
@@ -425,33 +441,17 @@ plotDists = function (vsd.obj) {
 plotDists(vsd)
 ```
 
-### 2. PCA Plot
+We observe that all the LNCaP samples cluster together and all the PC3 samples cluster together. Within each cell type, the Hypoxia samples cluster together and the Normoxia samples cluster together. The clustering pattern seems to make sense, suggesting that the experiment was successful.
+
+### 2. Variable Genes Heatmap
+
+We can create a more detailed heatmap in which we identify the genes that are driving the clustering between samples. To do so, we first obtain the top most variable genes across samples by selecting the genes with the highest `rowVars()` value. Then, we plug the normalized counts for these genes into a heatmap using `pheatmap::pheatmap()`. The heatmap will cluster the samples based on similarity as well as display the genes that are associated with each cluster on the right-hand side.
 
 ```{r}
-name.plotPCA = function (vsd.obj) {
-  pcaData <- plotPCA(vsd.obj,  intgroup = c("condition"), returnData = T)
-  percentVar <- round(100 * attr(pcaData, "percentVar"))
-  ggplot(pcaData, aes(PC1, PC2, color=condition)) +
-    geom_point(size=3) +
-    labs(x = paste0("PC1: ",percentVar[1],"% variance"),
-         y = paste0("PC2: ",percentVar[2],"% variance"),
-         title = "PCA Plot colored by condition") +
-    geom_text_repel(aes(label = name), color = "black")
-}
-
-name.plotPCA(vsd)
-```
-
-### 3. Variable Genes Heatmap
-
-```{r}
-
-vsd.obj = lncap_vsd
-
-plotHeatmap <- function (vsd.obj, num_genes = 500, annotation) {
+variable_gene_heatmap <- function (vsd.obj, num_genes = 500, annotation, title = "") {
   brewer_palette <- "RdBu"
   # Ramp the color in order to get the scale.
-  ramp <- colorRampPalette(brewer.pal(11, brewer_palette))
+  ramp <- colorRampPalette( RColorBrewer::brewer.pal(11, brewer_palette))
   mr <- ramp(256)[256:1]
   # get the stabilized counts from the vsd object
   stabilized_counts <- assay(vsd.obj)
@@ -468,23 +468,41 @@ plotHeatmap <- function (vsd.obj, num_genes = 500, annotation) {
   coldata <- as.data.frame(vsd.obj@colData)
   coldata$sizeFactor <- NULL
   # draw heatmap using pheatmap
-  my_heatmap <- pheatmap(top_variable_genes, color = mr, annotation_col = coldata, fontsize_col = 5, fontsize_row = 250/num_genes, fontsize = 5, border_color = NA)
+  my_heatmap <- pheatmap::pheatmap(top_variable_genes, color = mr, annotation_col = coldata, fontsize_col = 8, fontsize_row = 250/num_genes, border_color = NA, main = title)
   my_heatmap
 }
 
-plotHeatmap(vsd, annotation = human_annotation)
-plotHeatmap(vsd, num_genes = 30, annotation = human_annotation)
-plotHeatmap(vsd, num_genes = 100, annotation = human_annotation)
-
+variable_gene_heatmap(vsd, num_genes = 40, annotation = annotation)
 ```
 
-### Examine subsetted dds objects
+We see that the clustering is very similar to what we observed in the distance plot. We are also able to see the genes that are defining the differences between LNCaP and PC3 cells.
+
+### 3. PCA Plot
+
+A principal components plot is another way to observe how diverse the samples are. In the plot below, the samples which are most similar with each other in terms of their gene expression values will cluster together. The axis that are displayed correspond to the top two principal components that explain the majority of the variability in the data.
+
+```{r}
+plot_PCA = function (vsd.obj) {
+  pcaData <- plotPCA(vsd.obj,  intgroup = c("condition"), returnData = T)
+  percentVar <- round(100 * attr(pcaData, "percentVar"))
+  ggplot(pcaData, aes(PC1, PC2, color=condition)) +
+    geom_point(size=3) +
+    labs(x = paste0("PC1: ",percentVar[1],"% variance"),
+         y = paste0("PC2: ",percentVar[2],"% variance"),
+         title = "PCA Plot colored by condition") +
+    ggrepel::geom_text_repel(aes(label = name), color = "black")
+}
+plot_PCA(vsd)
+```
+
+We observe that The LNCaP samples are furthest separated from the PC3 samples on the X-axis (PC1), which explains around 99% of the variance in the dataset. Within each cell type, the Normoxia samples are separated from the Hypoxia samples. The amount of variability introduced by Hypoxia is small compared to the inherent difference between the LNCaP and PC3 cell lines. Because of this result, we should separate the LNCaP samples from the PC3 samples and determine the effects of Hypoxia on each cell line individually, which I will cover in the next section.
+
+## Making subsetted dds objects
 
 Because a lot of the variability in the data is due to the cell line difference, and because the biological comparisons that we want to make are only within either LNCaP, we will create an individual dds object for just LNCaP samples and and just the PC3 samples. The function generate_DESeq_object() below will make a dds object using your raw counts data and the groups that you want to compare. So far, this function can only do groups of 2. It will select the columns out from the raw data that match the group designations using `grep()`, build the colData matrix based on your group designations and the samples it selected, then generate and process the dds object using `DESeqDataSetFromMatrix()` and `DESeq()`.
 
 ```{r}
 generate_DESeq_object <- function (my_data, groups) {
-  my_data <- column_to_rownames(my_data, "ensembl_id")
   data_subset1 <- my_data[,grep(str_c("^", groups[1]), colnames(my_data))]
   data_subset2 <- my_data[,grep(str_c("^", groups[2]), colnames(my_data))]
   my_countData <- cbind(data_subset1, data_subset2)
@@ -510,23 +528,47 @@ lncap@colData
 head(lncap@assays$data@listData$counts)
 ```
 
-```{r}
+We can again assess the top most variable genes and sample variability using `variable_gene_heatmap()`, this time on the individually subsetted objects:
+
+```{r fig.width=6, fig.height=2.7}
 lncap_vsd <- vst(lncap, blind = T)
 pc3_vsd <- vst(pc3, blind = T)
+a <- variable_gene_heatmap(lncap_vsd, 30, annotation = annotation, title = "LNCaP variable genes")
+b <- variable_gene_heatmap(pc3_vsd, 30, annotation = annotation, title = "PC3 variable genes")
+gridExtra::grid.arrange(a[[4]],b[[4]], nrow = 1)
 ```
 
-```{r}
-plotHeatmap(lncap_vsd, 50, annotation = human_annotation)
-plotHeatmap(pc3_vsd, 50, annotation = human_annotation)
-```
+Now that we have created a dds object using only the LNCaP samples, we now see the genes that are driving the clustering between the Hypoxia and Normoxia conditions. This is a vastly different set of genes than was observed when we had both cell lines combined. Our differential gene expression analysis will yield a greater depth of genes for the comparison we care about, Hypoxia vs Normoxia.
 
 ## Extracting results from dds object
 
+Now that we have assessed sample-to-sample variability and gained confidence that our experiment was performed correctly, we can start answering the most pressing question: *what genes are differentially upregulated or downregulated by hypoxia in each cell line?* In this section, I will explain how to generate differential expression gene lists from the dds objects.
+
+To extract the differentially expressed genes from the dds object, we will use the `results()` function:
+
 ```{r}
-generate_DE_results <- function (dds, comparisons, fdrcutoff = 0.001, rawpcutoff = 0.001, log2cutoff = 0.5, cpmcutoff = 2) {
+results(lncap, contrast = c("condition", "LNCAP_Hypoxia", "LNCAP_Normoxia"))
+```
+
+We observe that the Hypoxia condition was compared to the Normoxia condition, and that there are a series of statistics calculated for each gene. The columns that you should pay the most attention to are `baseMean`, `log2FoldChange`, and `padj`. 
+
+* The `baseMean` is a measure of the overall expression of the gene. We can assess whether is it a highly expressed gene or if it is only barely above baseline.
+* The `log2FoldChange` measures how much higher the gene is in the Hypoxia condition compared to the Normoxia condition (negative values mean the expression is higher in Normoxia). 
+* The `padj` column is a measure of how likely the gene is to be significantly different between the two conditions being compared.
+
+We will use these statistics to filter and organize the data, and export lists of differentially expressed genes. The following criteria are used:
+
+1. Filter the genes for those that are signifcantly different based on padj (padj < cutoff).
+2. Sort by log2FoldChange to identify the genes that are most highly up or down.
+3. (optional) Filter out genes that are very lowly-expressed (low baseMean values) that are not as likely to be biologically relevant. To do so, we can either use baseMean or we can calculate another metric called "counts per million". The counts per million value is more intuitive because it is more comparable across different sequencing experiments.
+
+Since there are many variations of sorting / filtering the data, I wrote the function `generate_DE_results()` below to perform multiple filtering steps and provide output in the form of csv files. I export these files since they can be easily shared and interpreted by other bench scientists without having to read the data into R.
+
+```{r}
+generate_DE_results <- function (dds, comparisons, padjcutoff = 0.001, log2cutoff = 0.5, cpmcutoff = 2) {
   # generate average counts per million metric from raw count data 
   raw_counts <- counts(dds, normalized = F)
-  cpms <- enframe(rowMeans(cpm(raw_counts)))
+  cpms <- enframe(rowMeans(edgeR::cpm(raw_counts)))
   colnames(cpms) <- c("ensembl_id", "avg_cpm")
   
   # extract DESeq results between the comparisons indicated
@@ -554,28 +596,25 @@ generate_DE_results <- function (dds, comparisons, fdrcutoff = 0.001, rawpcutoff
   
   # generate sorted lists with the indicated cutoff values
   res <- res[order(res$log2FoldChange, decreasing=TRUE ),]
-  de_genes_fdr <- res[which(res$padj < fdrcutoff),]
-  de_genes_rawp <- res[which(res$pvalue < rawpcutoff),]
-  de_genes_log2f <- res[which(abs(res$log2FoldChange) > log2cutoff & res$padj < fdrcutoff),]
-  de_genes_cpm <- res[which(res$avg_cpm > cpmcutoff & res$padj < fdrcutoff),]
+  de_genes_padj <- res[which(res$padj < padjcutoff),]
+  de_genes_log2f <- res[which(abs(res$log2FoldChange) > log2cutoff & res$padj < padjcutoff),]
+  de_genes_cpm <- res[which(res$avg_cpm > cpmcutoff & res$padj < padjcutoff),]
   
   # write output to files
-  write.csv (de_genes_fdr, file = paste0(comparisons[1], "_vs_", comparisons[2], "_fdrgenes.csv"), row.names =F)
-  write.csv (de_genes_rawp, file = paste0(comparisons[1], "_vs_", comparisons[2], "_rawpgenes.csv"), row.names =F)
+  write.csv (de_genes_padj, file = paste0(comparisons[1], "_vs_", comparisons[2], "_padjgenes.csv"), row.names =F)
   write.csv (de_genes_log2f, file = paste0(comparisons[1], "_vs_", comparisons[2], "_log2f.csv"), row.names =F)
   write.csv (de_genes_cpm, file = paste0(comparisons[1], "_vs_", comparisons[2], "_cpm_cutoff.csv"), row.names =F)
   write.csv (combined_data, file = paste0(comparisons[1], "_vs_", comparisons[2], "_allgenes.csv"), row.names =F)
   write.table (res_prot_ranked, file = paste0(comparisons[1], "_vs_", comparisons[2], "_rank.rnk"), sep = "\t", row.names = F, quote = F)
   
   writeLines( paste0("For the comparison: ", comparisons[1], "_vs_", comparisons[2], ", out of ", nrow(combined_data), " genes, there were: \n", 
-               nrow(de_genes_rawp), " genes below p-value ", rawpcutoff, "\n",
-               nrow(de_genes_fdr), " genes below padj ", fdrcutoff, "\n",
-               nrow(de_genes_log2f), " genes below padj ", fdrcutoff, " and above a log2FoldChange of ", log2cutoff, "\n",
-               nrow(de_genes_cpm), " genes below padj ", fdrcutoff, " and above an avg cpm of ", cpmcutoff, "\n",
+               nrow(de_genes_padj), " genes below padj ", padjcutoff, "\n",
+               nrow(de_genes_log2f), " genes below padj ", padjcutoff, " and above a log2FoldChange of ", log2cutoff, "\n",
+               nrow(de_genes_cpm), " genes below padj ", padjcutoff, " and above an avg cpm of ", cpmcutoff, "\n",
                "Differential expression gene lists ordered by log2fchange with the cutoffs above have been generated.") )
-  gene_count <- tibble (cutoff_parameter = c("pvalue", "padj", "log2fc", "avg_cpm" ), 
-                        cutoff_value = c(rawpcutoff, fdrcutoff, log2cutoff, cpmcutoff), 
-                        signif_genes = c(nrow(de_genes_rawp), nrow(de_genes_fdr), nrow(de_genes_log2f), nrow(de_genes_cpm)))
+  gene_count <- tibble (cutoff_parameter = c("padj", "log2fc", "avg_cpm" ), 
+                        cutoff_value = c(padjcutoff, log2cutoff, cpmcutoff), 
+                        signif_genes = c(nrow(de_genes_padj), nrow(de_genes_log2f), nrow(de_genes_cpm)))
   invisible(gene_count)
 }
 
@@ -586,14 +625,16 @@ lncap_output
 pc3_output
 ```
 
-### Understanding the results ouptut
+After running the code, we should see a set of csv output files show up in the same folder as the R script. In addition, we should have a ranked gene list file, which is a list of all the genes in the dataset ordered by log2FoldChange. This file is required for Gene Set Enrichemnt Analysis, which I will explain in one of the sections below.
 
-Explain column by column and how we got it from the above code in run_DE()
+We can read in the output files with `read.csv()` and observe what the file structure is like:
 
 ```{r}
 res <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
-res
+head(res,10)
 ```
+
+The "_allgenes.csv" file will be used for the downstream visualizations. It contains all the data from the results() output (log2FolChange etc.) as well as other important data, the gene annotations, as well as the normalized counts for all the genes that were in the original raw_counts.csv file for each of the samples in the comparison. This gives us all the information we need to make informative visualizations. We can still re-organize and re-filter the data for the visualizations based on our own liking. The other csv files such as _padjgenes.csv can be distributed to other researchers who are only interested in the gene lists.
 
 ## Visualizations for DE results
 
@@ -896,5 +937,7 @@ Here, I have shown you a complete bulk RNA-sequencing analysis pipeline, startin
 We have also generated differential expression gene lists for each cell line that can be explored for novel genes associated with the hypoxia response, as well as showcased several different types of visualizations that can be used to display and explore bulk RNA-sequencing data.
 
 I hope my analysis pipepline has helped you make sense of your bulk RNA-sequencing data. If you are also interested in learning about single-cell RNA-sequencing data analysis, I have a comprehensive guide written here. Thanks for reading!
+
+
 
 
