@@ -8,19 +8,24 @@ output:
 
 ## Introduction
 
-Here, I present a complete bulk RNA-sequencing pipeline, including:
+RNA-sequencing is a powerful technique that can assess differences in global gene expression between groups of samples. For example, it can be used to:
 
-1. Finding and downloading the raw data using SRA tools
+* Identify differences between knockout and control samples
+* Understand the effects of treating cells/animals with therapeutics
+* Observe the gene expression changes that occur across development
+
+However, processing raw sequencing data and performing differential gene expression analysis can be daunting for researchers with limited experience in programming. My goal is to help researchers learn how to analyze bulk RNA-sequencing data by providing code, explanations, and the expected output for each step of the process. Here, I present an example of a complete bulk RNA-sequencing pipeline which includes:
+
+1. Finding and downloading raw data using NCBI SRA tools and Python
 2. Mapping FASTQ files using STAR
 3. Differential gene analysis using DESeq2
-4. Visualizations for Bulk RNA-sequencing
+4. Visualizations for bulk RNA-seq data
 
+If you are performing your own RNA-seq experiment and have obtained raw data from your sequencing facility, you can start this guide from Section 2 (Mapping FASTQ files using STAR).
 
-## Obtaining the raw data
+## Obtaining raw data from GEO
 
-### Data repository at GSE106305
-
-The raw data is available at: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE106305. There are several samples associated with this study, and we will only be focusing on the following samples:
+The dataset that we will be working with comes from [Guo et al. Nature Communications 2019](https://www.ncbi.nlm.nih.gov/pubmed/30655535). To find the raw sequencing data, we can navigate through the Gene Expression Omnibus (GEO) using the accession number provided in the publication: GSE106305. The GEO page corresponding to this accession number is https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE106305. There are several samples associated with this study, but we will only be focusing on the following RNA-sequencing samples:
 
 Sample Name | GSM Identifier | SRA Identifier (SRX) | SRA Runs (SRR, download these)
 ------------------ | ----------------- | -------------------------- | --------------------------------------------------------
@@ -33,23 +38,41 @@ PC3_RNA-Seq_siCtrl_Normoxia_rep2 | GSM3145518 | SRX4096744 | SRR7179537
 PC3_RNA-Seq_siCtrl_Hypoxia_rep1 | GSM3145521 | SRX4096747 | SRR7179540
 PC3_RNA-Seq_siCtrl_Hypoxia_rep2 | GSM3145522 | SRX4096748 | SRR7179541
 
-We have selected the control samples for both cell lines (Empty Vector for LNCaP and siCtrl for PC3) in conditions of either normoxia or hypoxia. This will allow us to analyze the LNCaP and PC3 cell lines for their gene expression changes in response to hypoxia, and compare which pathways are commonly upregulated/downregulated by both lines.
+We have selected the control samples for both cell lines (Empty_Vector for LNCaP and siCtrl for PC3) in conditions of either normoxia or hypoxia. Our **goal** is to find differentially expressed genes in response to hypoxia for both the LNCaP and PC3 cell lines.
 
-Each of the samples above have an associated SRA accession number, indicated above. These SRA accessions are used to download the raw sequencing data. To eventually get the raw data in FASTQ format, we first need to first download the SRA files (`.sra`) associated with each sample.
+Each of the samples above have an associated SRA accession number, indicated above. These SRA accessions are used to download the raw sequencing data. To eventually get the raw data in FASTQ format, we first need to first download the SRA runs associated with each sample. These SRA files are then used to generate the FASTQ files, which is the data format we need to be able to map sequencing reads to a reference genome.
 
 ### Downloading FASTQ files using SRA toolkit
 
-In order to download the SRA files onto your machine, we use the NCBI's SRA toolkit, which lets us use the command line to download a specified SRA accession ID. You can read more about SRA toolkit here: https://www.ncbi.nlm.nih.gov/books/NBK242621/.
+In order to download the SRA files onto your machine, we will use the NCBI's SRA toolkit. If you are using linux, you can type: `sudo apt install sra-toolkit` in your command line to install the toolkit. You can read more about SRA toolkit here: https://www.ncbi.nlm.nih.gov/books/NBK242621/.
 
-The toolkit works by first using the `prefetch` command to download the SRA file associated with the specified SRA ID. The SRA file contains a set of "instructions" for downloading the sequencing data associated with the SRA ID from NCBI. A sample command would be: `prefetch SRR7179504`. This will download the file `SRR7179504.sra` into your home directory at ~/ncbi/public/sra/.
+The toolkit works by first using the `prefetch` command to download the SRA file associated with the specified SRA ID. The SRA file contains a set of "instructions" for downloading the sequencing data associated with the SRA ID from NCBI. For example, to download the first SRA run for LNCaP_RNA-Seq_Empty_Vector_Normoxia_rep1, we would write:
 
-After you have downloaded the SRA file, you can use `fastq-dump` to extract the contents of it into a `.fastq` file. The Edwards lab at SDSU provides a nice tutorial for how to use fastq-dump here: https://edwards.sdsu.edu/research/fastq-dump/. A sample command would be: 
+```bash
+prefetch SRR7179504
+```
+```{}
+2020-02-14T22:15:36 prefetch.2.8.2: 1) Downloading 'SRR7179504'...
+2020-02-14T22:15:36 prefetch.2.8.2:  Downloading via https...
+2020-02-14T22:18:39 prefetch.2.8.2: 1) 'SRR7179504' was downloaded successfully
+2020-02-14T22:18:39 prefetch.2.8.2: 'SRR7179504' has 0 unresolved dependencies
+```
+
+
+This will download the file `SRR7179504.sra` into your home directory at ~/ncbi/public/sra/. We can now use `fastq-dump` to extract the contents of it into a FASTQ file. The Edwards lab at SDSU provides a nice tutorial for how to use fastq-dump here: https://edwards.sdsu.edu/research/fastq-dump/. To create the FASTQ file for SRR7179504, we would write: 
 
 ```bash
 fastq-dump --outdir fastq --gzip --skip-technical  --readids --read-filter pass --dumpbase --split-3 --clip ~/ncbi/public/sra/SRR7179504.sra
 ```
+```{}
+Rejected 13548432 READS because of filtering out non-biological READS
+Read 13548432 spots for /home/ericklu/ncbi/public/sra/SRR7179504.sra
+Written 13548432 spots for /home/ericklu/ncbi/public/sra/SRR7179504.sra
+```
 
-Since there are lots of SRA files associated with our samples, it would take a long time to manually run `prefetch` and `fastq-dump` for all the files. To automate all the downloads, I wrote a small script in python to call `fastq-dump` on each of the SRA IDs we want. The code is shown below as well as provided in this repo as `fastq_download.py`:
+This will create a file called `SRR7179504_pass.fastq.gz` in a subdirectory called `fastq` inside the directory where fastq-dump was performed. The ".gz" just means that the file is compressed.
+
+Since there are lots of SRA runs associated with our samples, it would take a long time to manually run `prefetch` and `fastq-dump` for all the files. To automate all the downloads, I wrote a small script in python to call `fastq-dump` on each of the SRA IDs we want. The code is shown below as well as provided in this repo as `fastq_download.py`:
 
 ```py
 import subprocess
@@ -77,11 +100,11 @@ for sra_id in sra_numbers:
     subprocess.call(fastq_dump, shell=True)
 ```
 
-We can run the python script by simply navigating to the folder on your machine where you want to store the fastq files (via the command line), then running `python fastq_download.py`. This should work in python 2 and python 3. After running the python script, our .fastq files should all be sitting in a directory called 'fastq'.
+We can run the python script by simply navigating to the folder on your machine where you want to store the FASTQ files (via the command line), then running `python fastq_download.py`. This should work in either python 2 and python 3. After running the python script, our FASTQ files should all be sitting in a directory called 'fastq'. If you would like more information about navigating through GEO and downloading SRA Runs, you can check out my other [repo](https://erilu.github.io/python-fastq-downloader/).
 
 ### Concatenating FASTQ files
 
-For samples such as LNCaP_RNA-Seq_Empty_Vector_Normoxia_rep1, there are four resulting fastq files containing the sequencing data. We can concatenate these four files into one file by using `cat` in the command line and storing the output into a new fastq file. Below, I perform the concatenation for each of the LNCaP samples, and :
+Each of the LNCaP samples was associated with four SRA runs, which means that we obtained four resulting FASTQ files for each sample after running `fastq_download.py`. For each sample, we should concatenate the four files into a single FASTQ file by using the command `cat`. Below, I perform the concatenation for each of the LNCaP samples:
 
 ```bash
 cat SRR7179504_pass.fastq.gz SRR7179505_pass.fastq.gz SRR7179506_pass.fastq.gz SRR7179507_pass.fastq.gz  > LNCAP_Normoxia_S1.fastq.gz
@@ -90,7 +113,7 @@ cat SRR7179520_pass.fastq.gz SRR7179521_pass.fastq.gz SRR7179522_pass.fastq.gz S
 cat SRR7179524_pass.fastq.gz SRR7179525_pass.fastq.gz SRR7179526_pass.fastq.gz SRR7179527_pass.fastq.gz  > LNCAP_Hypoxia_S2.fastq.gz
 ```
 
-In contrast, there is only one fastq file for each of the PC3 samples. We can just rename them from their SRR identifiers to their real sample names using `mv`:
+In contrast, there is only one FASTQ file for each of the PC3 samples. We can just rename them from their SRR identifiers to their real sample names using `mv`:
 
 ```bash
 mv SRR7179536_pass.fastq.gz PC3_Normoxia_S1.fastq.gz
@@ -99,23 +122,21 @@ mv SRR7179540_pass.fastq.gz PC3_Hypoxia_S1.fastq.gz
 mv SRR7179541_pass.fastq.gz PC3_Hypoxia_S2.fastq.gz
 ```
 
-## Aligning reads using STAR
+We don't need the individual SRA runs anymore, so we can remove them all using the command `rm SRR*`, which removes all the files in the folder that begin with SRR. Now, the folder should contain a total of 4 FASTQ files for LNCaP and 4 FASTQ files for PC3. We are ready to begin aligning these FASTQ files to the reference genome!
 
-Each read in your fastq file must be "mapped" to a reference genome. Mapping can be described as finding the place in the reference genome that best matches the fragment of an mRNA transcript captured in the read. In this section, I will describe the concepts behind mapping reads to a reference genome, and how to do it using the tool STAR and some python scripting.
+## Mapping reads using STAR
 
-### The concepts behind mapping reads
+Each read in your FASTQ file must be "mapped" to a reference genome. Mapping can be described as finding the place in the reference genome that best matches the fragment of an mRNA transcript captured in the read. In this section, I will describe the concepts behind mapping reads to a reference genome, and how to do it using the tool STAR (Spliced Transcripts Alignment to a Reference, https://github.com/alexdobin/STAR) and some python scripting.
 
-In order to perform bulk RNA-sequencing, a "library" must first be prepared from the cells of interest and this library is what is sequenced to create the fastq files. To create a library, mRNA from the cells is captured and reverse transcribed into cDNA. This is then fragmented into small pieces, and sequencing adaptors are ligated to the ends of each fragment to create the "library". The resulting fastq file contains the sequences of all these tiny little fragments. Using the sequence for each fragment (a "read"), we can then try to figure out from which part of the genome that fragment came from, and subsequently which gene was being transcribed to create the original mRNA that was captured. Counting the number of times a "read" mapped to a specific gene gives us information about how "high" or "low" a gene was being expressed.
+### The concept behind mapping reads
 
-### STAR
+In order to perform bulk RNA-sequencing, a "library" must first be prepared from the RNA of your cells of interest. This library is what is sequenced to create the FASTQ files. To create a library, mRNA from the cells is first captured and reverse transcribed into cDNA. This is then fragmented into small pieces, and sequencing adaptors are ligated to the ends of each fragment to create the "library". A sequencer will "read" these fragments and store the sequences in a FASTQ file. Using the sequence for each fragment (a "read"), we can use software to try to figure out which part of the genome that fragment came from, based on sequence similarity. This subsequently tells us which gene was being transcribed to create the original mRNA that was captured. Counting the number of times a "read" mapped to a specific gene gives us information about how "high" or "low" a gene was being expressed.
 
-A great RNA-seq alignment tool is STAR (Spliced Transcripts Alignment to a Reference, https://github.com/alexdobin/STAR). In order to install STAR, follow the installation instructions provided in the github repo for the platform you are using.
+### Building the genome index
 
-#### building human genome index using genomeGenerate
+A great RNA-seq alignment tool is STAR. In order to install STAR, follow the installation instructions provided in its GitHub [repo](https://github.com/alexdobin/STAR). Once STAR is installed, we first need to build a genome index. Since we are analyzing RNA-seq data from human cells, we need to build the human reference genome.
 
-Once STAR is installed, we first need to build a genome index. In our case, we need to use the human reference genome since we are analyzing RNA-seq data from human cells. We have to supply STAR with the human reference genome sequence (FASTA) and annotation (GTF) files, from which STAR will make genome index files.
-
-We can download the FASTA and GTF files from the ensembl website (https://uswest.ensembl.org/Homo_sapiens/Info/Index) or using the command line:
+To build the genome index, we have to run STAR in `--genomeGenerate` mode and supply it with the human reference genome sequence (FASTA) and annotation (GTF) files. We can download the FASTA and GTF files from the ensembl website (https://uswest.ensembl.org/Homo_sapiens/Info/Index) or using the command line:
 
 ```bash
 wget ftp://ftp.ensembl.org/pub/release-99/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
@@ -123,7 +144,7 @@ wget ftp://ftp.ensembl.org/pub/release-99/gtf/homo_sapiens/Homo_sapiens.GRCh38.9
 gunzip *.gz
 ```
 
-Once these are downloaded and unzipped, we can run the STAR genomeGenerate command below to make the genome index file. For the genomeDir parameter, you can specify the directory where you are keeping the FASTA and GTF files.
+Once these are downloaded and unzipped, we can run the command below to make the genome index file. For the `--genomeDir` parameter, you should specify the directory where you are keeping the FASTA and GTF files.
 
 ```bash
 STAR --runThreadN 64 --runMode genomeGenerate --genomeDir /data/genomes/h38/STAR/ --genomeFastaFiles /data/genomes/h38/STAR/Homo_sapiens.GRCh38.dna.primary_assembly.fa --sjdbGTFfile /data/genomes/h38/STAR/Homo_sapiens.GRCh38.99.gtf
@@ -148,25 +169,28 @@ Feb 15 20:28:18 ... writing SAindex to disk
 Feb 15 20:28:20 ..... finished successfully
 ```
 
-After running the command, you should see a bunch of genome index files in the directory specified by genomeDir. Now, we can start mapping reads from our FASTQ files, which I will explain in the next section.
+After running the command, you should see a bunch of genome index files in the directory specified by `--genomeDir`. We can now start mapping reads from the FASTQ files to our newly created reference genome, which I will explain in the next section.
 
-#### mapping reads
+### Mapping reads
 
-An example STAR command used to map a single sample, LNCAP_Normoxia_S1_R1_001.fastq.gz, to the reference genome that we just built is:
+Here is an example STAR command used to map a single sample, LNCAP_Normoxia_S1_R1_001.fastq.gz, to the reference genome:
 
 ```bash
 STAR --runThreadN 64 --genomeDir /data/genomes/h38/STAR --outFilterType BySJout --outFilterMismatchNoverLmax 0.04 --outFilterMismatchNmax 999 --alignSJDBoverhangMin 1 --alignSJoverhangMin 8 --outFilterMultimapNmax 20 --alignIntronMin 20 --alignIntronMax 1000000 --alignMatesGapMax 1000000 --readFilesIn /fastq/LNCAP_Normoxia_S1_R1_001.fastq.gz --clip3pAdapterSeq GATCGGAAGAGCACACGTCTGAACTCCAGTCAC --outSAMtype BAM SortedByCoordinate --quantMode GeneCounts --outFileNamePrefix LNCAP_Normoxia_S1
 ```
-Notice that I've plugged in the directory that contains the genome index files for `--genomeDir`, as well as the fastq file location for sample LNCAP_Normoxia_S1_R1_001.fastq.gz for `--readFilesIn` and also provided the sample name for `--outFileNamePrefix`.
 
+The parameters that you should pay attention to are:
 
-Since we have 8 samples to run, and each sample will take a while to run, we can use a python script to run the command for each fastq in the directory:
+* `--genomeDir`, which indicates the directory that contains the genome index files
+* `--readFilesIn`, which specifies the FASTQ file location for sample LNCAP_Normoxia_S1_R1_001.fastq.gz
+* `--outFileNamePrefix`, which specifies the name we want to give the STAR output
+
+The rest of the parameters are default settings recommended by the STAR, which are usually sufficient. Since we have 8 samples to run, and each sample will take a while to run, we can use a python script to run the command for each FASTQ in the directory:
 
 ```py
 import subprocess
 import os
 
-# modify these variables based on where you store your data / genome index
 output_directory = "STAR_output/"
 genome_directory = "/data/genomes/h38/STAR/"
 fastq_directory = "/data/analysis/hypoxia/fastq/"
@@ -183,7 +207,7 @@ for fastq in os.listdir(fastq_directory):
         subprocess.call("STAR --runThreadN 64 --genomeDir " + genome_directory + " --readFilesCommand zcat --outFilterType BySJout --outFilterMismatchNoverLmax 0.04 --outFilterMismatchNmax 999 --alignSJDBoverhangMin 1 --alignSJoverhangMin 8 --outFilterMultimapNmax 20 --alignIntronMin 20 --alignIntronMax 1000000 --alignMatesGapMax 1000000 --readFilesIn "+ fastq_directory + fastq + " --clip3pAdapterSeq GATCGGAAGAGCACACGTCTGAACTCCAGTCAC --outSAMtype BAM SortedByCoordinate --quantMode GeneCounts --outFileNamePrefix " + output_directory + prefix + "/", shell=True)
 ```
 
-The output of a successful STAR alignment looks like this, for one iteration of the loop:
+We can save the script as `align_STAR.py`, and run the script by simply typing `python align_STAR.py` in the command line. The output of a successful STAR alignment looks like this, for one iteration of the loop:
 
 ```{}
 Currently mapping: PC3_Normoxia_S1.fastq.gz
@@ -195,11 +219,11 @@ Feb 16 23:31:10 ..... started sorting BAM
 Feb 16 23:32:59 ..... finished successfully
 ```
 
-We can save the script as align_STAR.py, and run the script by simply typing `python align_STAR.py` in the command line (should work in python 2 or 3). The output containing the alignment files can be found in the folder `STAR_output`.
+After the script has finished running, the output containing the alignment files should be found in the directory `STAR_output/`.
 
 ### Understanding ReadsPerGene.out.tab
 
-In the STAR_output folder, you will find a folder of results for each one of the FASTQ files you mapped. Inside each folder, you will find: 
+In the `STAR_output/` directory, you will find a separate folder of results for each of the FASTQ files you mapped. Inside each folder, you should see the following files: 
 
 ```{}
 Aligned.sortedByCoord.out.bam
@@ -210,12 +234,11 @@ ReadsPerGene.out.tab
 SJ.out.tab
 ```
 
-The file that contains the data you need is `ReadsPerGene.out.tab`. This file contains the number of reads that mapped to each gene in the transcriptome. A quick glance at the file using the command below shows the structure of the file, in which there are some QC metrics at the beginning of the file (N_unmapped, etc.) followed by each gene in the transcriptome. 
+The file that contains the data you need is `ReadsPerGene.out.tab`. This file contains the number of reads that mapped to each gene in the transcriptome. A quick glance at the file using the command below shows the structure of the file. There are some QC metrics at the beginning of the file (N_unmapped, etc.) followed by each gene in the transcriptome.
 
 ```ba
 cat ReadsPerGene.out.tab | head -n 10
 ```
-
 ```{}
 N_unmapped	2461926	2461926	2461926
 N_multimapping	4255262	4255262	4255262
@@ -229,17 +252,17 @@ ENSG00000284332	0	0	0
 ENSG00000237613	0	0	0
 ```
 
-The first column corresponds to the ensembl gene ID, and columns 2, 3, and 4 correspond to the counts mapped for each gene. You might be wondering why there are 3 columns of counts-- each column corresponds to the "strandedness" of the read mapping. An RNA-seq library is composed of DNA, which has two strands: a "sense" strand and an "anti-sense" strand. RNA-sequencing libraries can be prepared as either "unstranded" or "stranded". The column you choose for downstream analysis is typically dictated by the type of library kit that was used to prepare the samples.
+The first column corresponds to the ensembl gene ID. Columns 2, 3, and 4 correspond to the counts mapped for each gene. You might be wondering why there are 3 columns of counts. Each column corresponds to the "strandedness" of the read mapping. An RNA-seq library is composed of DNA, which has two strands: a "sense" strand and an "anti-sense" strand. RNA-seq libraries can be prepared as either "unstranded" or "stranded". The column you choose for downstream analysis is typically dictated by the type of library kit that was used to prepare the samples.
 
 * If an "unstranded" library prep kit was used, column 2 should be selected. In this case, we don't know which strand the original mRNA was produced from, and reads are mapped to both the sense and anti-sense strand.
 
 * If a "stranded" library prep kit was used, we must choose from column 3 or 4. The information from which strand the mRNA originated from is retained. Column 3 corresponds to the first read strand aligned, and column 4 corresponds to the second read strand aligned.
 
-Looking at the sample information at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM3145522, we see that the TruSeq® Stranded mRNA Library Prep Kit (RS-122-2101, Illumina) was used to prepare the samples. Since this is a stranded library prep kit, we must select from column 3 or 4. Looking at the output, we observe that column 4 contains the reads whereas column 3 does not. We will proceed with using column 4 from each of the samples for downstream analysis.
+To determine the strandedness for our samples, the we need to find out the exact library preparation kit that was used. The sample information at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM3145522 states that the TruSeq® Stranded mRNA Library Prep Kit (RS-122-2101, Illumina) was used to prepare these samples. Since this is a stranded library prep kit, we must select from column 3 or 4. Looking at the output, we observe that column 4 contains the reads whereas column 3 does not. We will proceed with using column 4 from each of the samples for downstream analysis.
 
 ### Selecting read counts by sample
 
-There is an folder for each one of our samples. We need to combine column 4 in `ReadsPerGene.out.tab` for each of the samples into one data file. To do so, we can loop through each of the `ReadsPerGene.out.tab` files in Python and extract information from the column corresponding to the correct strand using the code below.
+For each of our samples, we need to select column 4 from `ReadsPerGene.out.tab` and place them into one data file for downstream analysis. Rather than doing this manually, we can write a Python script to loop through each folder within `STAR_output/`, obtain column 4 of the `ReadsPerGene.out.tab`, and write the data to a single output file. The script `combine_STAR_output.py` does the job by storing the the counts per gene for each sample in a dictionary of dictionaries, and writes the aggregated data to a file called `raw_counts.csv`.
 
 ```py
 import os
@@ -283,7 +306,7 @@ with open("raw_counts.csv", "wt") as counts_file, open("qc.csv", "wt") as qc_fil
             counts_writer.writerow(output)
 ```
 
-The code outputs a file called `raw_counts.csv`, with 9 columns. The first column is the Ensembl ID of each of the genes in the transcriptome. The rest of the columns correspond to the counts per gene for the 8 samples. Another file named `qc.csv` is created containing the qc metrics that were at the beginning of the `ReadsPerGene.out.tab` file for each sample.
+The first column of the output file `raw_counts.csv` is the Ensembl ID of each of the genes in the transcriptome. The rest of the columns correspond to the counts per gene for the 8 samples that we mapped. Another file named `qc.csv` is created which contains the qc metrics that were at the beginning of the `ReadsPerGene.out.tab` file for each sample.
 
 ## Performing differential gene expression analysis
 
