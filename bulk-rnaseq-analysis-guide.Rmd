@@ -1,9 +1,11 @@
 ---
-title: "Bulk RNA-seq data processing and differential gene expression analysis pipeline"
+title: "Bulk RNA-sequencing pipeline and differential gene expression analysis"
 author: Erick Lu
-output: 
+output:
   html_document:
     toc: true
+    toc_float: true
+    df_print: paged
 ---
 
 ## Introduction
@@ -42,7 +44,7 @@ We have selected the control samples for both cell lines (Empty_Vector for LNCaP
 
 Each of the samples above have an associated SRA accession number, indicated above. These SRA accessions are used to download the raw sequencing data. To eventually get the raw data in FASTQ format, we first need to first download the SRA runs associated with each sample. These SRA files are then used to generate the FASTQ files, which is the data format we need to be able to map sequencing reads to a reference genome.
 
-### Downloading FASTQ files using SRA toolkit
+### Downloading FASTQ files using SRA tools
 
 In order to download the SRA files onto your machine, we will use the NCBI's SRA toolkit. If you are using linux, you can type: `sudo apt install sra-toolkit` in your command line to install the toolkit. You can read more about SRA toolkit here: https://www.ncbi.nlm.nih.gov/books/NBK242621/.
 
@@ -128,9 +130,28 @@ We don't need the individual SRA runs anymore, so we can remove them all using t
 
 Each read in your FASTQ file must be "mapped" to a reference genome. Mapping can be described as finding the place in the reference genome that best matches the fragment of an mRNA transcript captured in the read. In this section, I will describe the concepts behind mapping reads to a reference genome, and how to do it using the tool STAR (Spliced Transcripts Alignment to a Reference, https://github.com/alexdobin/STAR) and some python scripting.
 
-### The concept behind mapping reads
+### Concepts behind mapping reads
 
-In order to perform bulk RNA-sequencing, a "library" must first be prepared from the RNA of your cells of interest. This library is what is sequenced to create the FASTQ files. To create a library, mRNA from the cells is first captured and reverse transcribed into cDNA. This is then fragmented into small pieces, and sequencing adaptors are ligated to the ends of each fragment to create the "library". A sequencer will "read" these fragments and store the sequences in a FASTQ file. Using the sequence for each fragment (a "read"), we can use software to try to figure out which part of the genome that fragment came from, based on sequence similarity. This subsequently tells us which gene was being transcribed to create the original mRNA that was captured. Counting the number of times a "read" mapped to a specific gene gives us information about how "high" or "low" a gene was being expressed.
+In order to perform bulk RNA-sequencing, a "library" must first be prepared from the RNA of your cells of interest. This library is what is sequenced to create the FASTQ files. To create a library, mRNA from the cells is first captured and reverse transcribed into cDNA. This is then fragmented into small pieces, and sequencing adaptors are ligated to the ends of each fragment to create the "library". A sequencer will "read" these fragments and store the sequences in a FASTQ file. We can observe what the sequences look like by printing out one of the "reads", which are stored in 4-line chunks inside the FASTQ file.
+
+```ba
+zcat LNCAP_Hypoxia_S1.fastq.gz | head -4
+```
+```{}
+@SRR7179520.1.1 1 length=76
+GTGAANATAGGCCTTAGAGCACTTGANGTGNTAGNGCANGTNGNNCCGGAACGNNNNNNNNAGGTNGNNNGNGTTG
++SRR7179520.1.1 1 length=76
+AAAAA#EEEEEEEEEEEEEEEEEEEE#EEE#EEE#EEE#EE#E##EEEEEEEE########EEEE#E###E#EAEA
+```
+
+Each line of the read stores a different set of information:
+
+* Line 1 contains a sequence identifier and an optional description, and starts with "@".
+* Line 2 contains the actual sequence of the read.
+* Line 3 starts with "+", and can contain the same sequence identifier as line 1, but having the identifier is not required.
+* Line 4 contains quality values for each base designation from ine 2. For example, the first base "G" has a quality value of "A". This is basically an assessment of how confident the machine is that it assigned the right base.
+
+Using the sequence for each fragment, we can use software to try to figure out which part of the genome that fragment originally came from based on sequence similarity. This subsequently tells us which gene was being transcribed to create the original mRNA that was captured. Counting the number of times a "read" mapped to a specific gene gives us information about how "high" or "low" a gene was being expressed.
 
 ### Building the genome index
 
@@ -321,14 +342,14 @@ if (!requireNamespace("BiocManager", quietly = TRUE))
 BiocManager::install("DESeq2")
 ```
 
-Once installed, we will load the packages that are required for our analysis. The `tidyverse` will be used to wrangle gene lists and output from `DESeq2`, as well as to create visualizations.
+Once installed, we will load the packages that are required for our analysis. I will be using version 1.22.2 of `DESeq2`. The `tidyverse` will be used to wrangle gene expression tables and create visualizations.
 
 ```{r message=F}
 library("DESeq2")
 library("tidyverse")
 ```
 
-We can now load `raw_counts.csv` into R, and take a look at the structure of the data:
+We can now read in `raw_counts.csv` into R, and take a look at the structure of the data:
 
 ```{r}
 data <- read.csv("raw_counts.csv", header = T, row.names = "ensembl_id")
@@ -352,14 +373,14 @@ To create the DESeq2 object, we can use the function `DESeqDataSetFromMatrix()`,
 2. `colData` - A table that provides the sample groups to be compared. It should also assign each sample to a group (i.e. biological replicates).
 3. `design` - A formula that dictates how the counts for each gene depend on the variables in `colData`. We will use the groups defined in colData.
 
-To construct the colData, we first define the groups and how many samples should lie within each group:
+To construct the `colData`, we first define the groups and how many samples each group has:
 
 ```{r}
 # identify biological replicates
 condition <- c(rep("LNCAP_Hypoxia", 2), rep("LNCAP_Normoxia", 2), rep("PC3_Hypoxia", 2), rep("PC3_Normoxia", 2))
 ```
 
-Then, we assign individual sample names to the grouping categories by binding them within a data frame:
+Then, we assign individual sample names (corresponding to the column names of `raw_counts.csv`) to the grouping categories by binding them within a data frame:
 
 ```{r}
 # assign replicates to each sample name to construct colData
@@ -382,8 +403,16 @@ This can then be processed using the function `DESeq()`, which will perform diff
 2. estimation of dispersion: estimateDispersions
 3. Negative Binomial GLM fitting and Wald statistics: nbinomWaldTest
 
-```{r}
+```{r message=F}
 dds <- DESeq(dds)
+```
+```{}
+## estimating size factors
+## estimating dispersions
+## gene-wise dispersion estimates
+## mean-dispersion relationship
+## final dispersion estimates
+## fitting model and testing
 ```
 
 We can observe some basic information about the `dds` object just by calling its name:
@@ -405,19 +434,23 @@ normalized_counts <- counts(dds, normalized = F)
 head(normalized_counts)
 ```
 
-We can use the normalized counts to compare gene expression values from sample to sample.
+These normalized counts can be used to compare gene expression values between samples.
 
 ### Making an annotation file from BioMart
 
-Right now, each of the rownames corresponds to an Ensembl ID. It would be nice to have each Ensembl ID translated into its gene name, so that we can search the data for our gene of interest without having to look up the Ensembl ID each time. We will also need to know the gene names each ensembl ID when generating our downstream visualizations and differential gene lists.
+Right now, our data labels genes using their Ensembl ID (e.g., ENSG00000111640). It would be nice to have each Ensembl ID translated into its gene name, so that we can search the data for our gene of interest without having to look up the Ensembl ID each time. We will also need to know the gene names for each Ensembl ID when generating our downstream visualizations and differential gene lists.
 
-In order to map ensembl IDs to their gene names, we have to build a genome annotation file using the BioMart at ensembl.org using the following steps:
+In order to map Ensembl IDs to their gene names, we have to build a genome annotation file using the BioMart at ensembl.org. Here's how to do so:
 
-1. First go to the ensembl BioMart at http://uswest.ensembl.org/biomart/martview/
-2. Choose the database to use, in this case "Ensembl Genes 99" or whatever is the current version
-3. Choose an annotation to use, in this case "Human Genes (GRCh38.p13) 
-4. On the left sidebar, click "Attributes", which will allow you to select the items you want to map. The items you want are "Gene stable ID", (which is the ensemble id in our raw_counts.csv file), and "Gene name". You can un-check "Gene stable ID version", "Transcript stable ID", and "Transcript stable ID version". You can also choose to include other attributes of your liking, such as "Gene type" to know which genes are protein-coding. If we want to perform Gene Set Enrichment Analysis (GSEA) downstream, we will need this category.
-5. Click on results, check "unique results only", select export as csv, and hit the "Go" button!
+1. Go to the Ensembl BioMart at http://uswest.ensembl.org/biomart/martview/
+2. Choose the database to use, in this case "Ensembl Genes 99".
+3. Choose an annotation to use, in this case "Human Genes (GRCh38.p13)".
+4. On the lefthand sidebar, click "Attributes", which will allow you to select the items you want to map. For this analysis, you want:
+  * "Gene stable ID", which is the Ensemble Id in our raw_counts.csv file (e.g. ENSG00000111640)
+  * "Gene name", which is the most commonly used gene name (e.g. GAPDH)
+  * "Gene type", which specifies which genes are protein-coding. If we want to perform Gene Set Enrichment Analysis (GSEA), we will need this category.
+  * You can un-check "Gene stable ID version", "Transcript stable ID", and "Transcript stable ID version".
+5. Click on the results button, check "unique results only", select "export as csv", and hit the "Go" button!
 
 The annotation should download to your computer as "mart_export.txt". We can rename it to "GRCh38.p13_annotation.csv" read it into R:
 
@@ -426,7 +459,7 @@ annotation <- read.csv("GRCh38.p13_annotation.csv", header = T, stringsAsFactors
 head(annotation)
 ```
 
-We observe that there are two columns, one named "Gene.stable.ID" which is contains the ensembl IDs, and a second column named "Gene.name" which contains the gene names that we want to map to our `raw_counts.csv` file. To map the names, we can join two tables based on the ensembl IDs using the `right_join()` function from the tidyverse. As an example, I add the annotation to our normalized counts table below:
+We observe that there are three columns corresponding to the annotations that we selected. To map the names, we can join two tables based on the Ensembl IDs using the `right_join()` function from the tidyverse. As an example, I add this annotation to the normalized counts table:
 
 ```{r}
 normalized_counts <- rownames_to_column(as.data.frame(normalized_counts), var = "ensembl_id")
@@ -436,11 +469,11 @@ head(annotated_data)
 # write.csv(annotated_data, file = "gene_annotated_normalized_counts.csv")
 ```
 
-We observe that the gene names are now placed directly next to the Ensembl IDs. We can export this normalized counts file to csv and provide it to collaborating scientists, and they will be able to quickly search for their genes of interest! For examples of how to plot the normalized counts for a given gene across samples, see the section [Visualizations for DE results].
+Now, the gene names are now placed directly next to the Ensembl IDs. We can export this normalized counts file and provide it to collaborating scientists, and they will be able to quickly search for their genes of interest! For examples of how to plot the normalized counts for a given gene across samples, see the section [Visualizations for DE results].
 
 ## Visualizations for sample variability
 
-At this point, we can start to assess sample-to-sample variability. This is important for assessing whether you have outliers in your dataset, as well as whether or not your data makes sense. For example, if you have biological/technical replicates, they should look fairly similar to one another. In this section, we will cover some functions that can be used for this purpose. In order to use these functions, we first perform a variance stabilizing transformation on the data using `vst()`:
+At this point, we can start to assess sample-to-sample variability. This is important for assessing whether you have outliers in your dataset, as well as whether or not your data makes sense. For example, if you have biological/technical replicates, they should look fairly similar to each other. In this section, we will cover some functions that can be used for this purpose. In order to use these functions, we first perform a variance stabilizing transformation on the data using `vst()`:
 
 ```{r}
 vsd <- vst(dds, blind = TRUE)
@@ -448,7 +481,7 @@ vsd <- vst(dds, blind = TRUE)
 
 ### 1. Distance Plot
 
-The distance plot calculates the euclidean distance between the expression values for each individual sample. This is a way to identify which samples are most closely or differently related in terms of their gene expression pattern.
+The distance plot calculates the euclidean distance between the expression values for each individual sample. This is a way to identify which samples are most closely related in terms of their gene expression pattern.
 
 ```{r}
 plotDists = function (vsd.obj) {
@@ -464,11 +497,11 @@ plotDists = function (vsd.obj) {
 plotDists(vsd)
 ```
 
-We observe that all the LNCaP samples cluster together and all the PC3 samples cluster together. Within each cell type, the Hypoxia samples cluster together and the Normoxia samples cluster together. The clustering pattern seems to make sense, suggesting that the experiment was successful.
+We observe that all the LNCaP samples cluster together and all the PC3 samples cluster together. Within each cell type, the hypoxia samples cluster together and the normoxia samples cluster together. These clustering patterns make sense, suggesting that the experiment was successful.
 
 ### 2. Variable Genes Heatmap
 
-We can create a more detailed heatmap in which we identify the genes that are driving the clustering between samples. To do so, we first obtain the top most variable genes across samples by selecting the genes with the highest `rowVars()` value. Then, we plug the normalized counts for these genes into a heatmap using `pheatmap::pheatmap()`. The heatmap will cluster the samples based on similarity as well as display the genes that are associated with each cluster on the right-hand side.
+We can also identify the genes that are driving the clustering between samples and display these in a heatmap. To do so, we first obtain the top most variable genes across samples by selecting the genes with the highest `rowVars()` value. Then, we plug the normalized counts for these genes into a heatmap using `pheatmap::pheatmap()`. The heatmap will cluster the samples based on expression similarity as well as display the genes that are associated with each cluster on the right-hand side. Note that the genes are simply chosen based on variability and no statistical tests are performed to determine whether they are actually significantly different between groups.
 
 ```{r}
 variable_gene_heatmap <- function (vsd.obj, num_genes = 500, annotation, title = "") {
@@ -491,20 +524,19 @@ variable_gene_heatmap <- function (vsd.obj, num_genes = 500, annotation, title =
   coldata <- as.data.frame(vsd.obj@colData)
   coldata$sizeFactor <- NULL
   # draw heatmap using pheatmap
-  my_heatmap <- pheatmap::pheatmap(top_variable_genes, color = mr, annotation_col = coldata, fontsize_col = 8, fontsize_row = 250/num_genes, border_color = NA, main = title)
-  my_heatmap
+  pheatmap::pheatmap(top_variable_genes, color = mr, annotation_col = coldata, fontsize_col = 8, fontsize_row = 250/num_genes, border_color = NA, main = title)
 }
 
 variable_gene_heatmap(vsd, num_genes = 40, annotation = annotation)
 ```
 
-We see that the clustering is very similar to what we observed in the distance plot. We are also able to see the genes that are defining the differences between LNCaP and PC3 cells.
+We see that the clustering is very similar to what we observed in the distance plot. There are a clear set of genes that are specific to either LNCaP or PC3 cells. Given that we are analyzing data from cell lines, it is not surprising that the clustering is so clearly defined. If you are working with highly heterogenous samples (e.g. tissues), there may be significant variability across samples. Knowing the genes that are defining the differences between samples is useful for assessing whether there were sample preparation issues such as poor cell purity or tissue contamination.
 
 ### 3. PCA Plot
 
-A principal components plot is another way to observe how diverse the samples are. In the plot below, the samples which are most similar with each other in terms of their gene expression values will cluster together. The axis that are displayed correspond to the top two principal components that explain the majority of the variability in the data.
+A principal components plot is another way to observe how diverse the samples are, which uses a cartesian coordinate system rather than a heatmap. As always, the samples which are most similar with each other in terms of their gene expression values will be closer to each other on the plot. The axes that are displayed correspond to the top two principal components that explain the majority of the variability in the data.
 
-```{r}
+```{r fig.width=6, fig.height=5}
 plot_PCA = function (vsd.obj) {
   pcaData <- plotPCA(vsd.obj,  intgroup = c("condition"), returnData = T)
   percentVar <- round(100 * attr(pcaData, "percentVar"))
@@ -518,11 +550,11 @@ plot_PCA = function (vsd.obj) {
 plot_PCA(vsd)
 ```
 
-We observe that The LNCaP samples are furthest separated from the PC3 samples on the X-axis (PC1), which explains around 99% of the variance in the dataset. Within each cell type, the Normoxia samples are separated from the Hypoxia samples. The amount of variability introduced by Hypoxia is small compared to the inherent difference between the LNCaP and PC3 cell lines. Because of this result, we should separate the LNCaP samples from the PC3 samples and determine the effects of Hypoxia on each cell line individually, which I will cover in the next section.
+We observe that The LNCaP samples are furthest separated from the PC3 samples on the x-axis (PC1), which explains a whopping 99% of the variance in the dataset. Within each cell type, the normoxia samples are separated from the hypoxia samples. The amount of variability introduced by hypoxia is small compared to the inherent difference between the LNCaP and PC3 cell lines. If we are interested in the effects of hypoxia on gene expression, we should separate the LNCaP samples from the PC3 samples first, create separate DESeq2 objects, and then determine the effects of hypoxia on each cell line individually. I will cover this in the next section.
 
 ## Making subsetted dds objects
 
-Because a lot of the variability in the data is due to the cell line difference, and because the biological comparisons that we want to make are only within either LNCaP, we will create an individual dds object for just LNCaP samples and and just the PC3 samples. The function generate_DESeq_object() below will make a dds object using your raw counts data and the groups that you want to compare. So far, this function can only do groups of 2. It will select the columns out from the raw data that match the group designations using `grep()`, build the colData matrix based on your group designations and the samples it selected, then generate and process the dds object using `DESeqDataSetFromMatrix()` and `DESeq()`.
+Because a lot of the variability in the data is due to the difference in the background of the cell lines, we must create separate DESeq2 object for the LNcaP and PC3 samples. The function generate_DESeq_object() below will make a dds object using your raw counts data and the two groups that you want to compare. It will select the columns out from the raw data that match the group designations using `grep()`, build the colData matrix based on your group designations, and generate the DESeq2 object using `DESeqDataSetFromMatrix()` and `DESeq()`.
 
 ```{r}
 generate_DESeq_object <- function (my_data, groups) {
@@ -536,56 +568,56 @@ generate_DESeq_object <- function (my_data, groups) {
   dds <- DESeqDataSetFromMatrix(countData = my_countData,
   							  colData = my_colData,
   							  design = ~ condition)
-  dds <- DESeq(dds)
+  dds <- DESeq(dds, quiet = T)
   return(dds)
 }
+```
 
+The function should print the colData used to generate each dds object, so we can double check to make sure that the appropriate sample columns were selected and that the grouping was correct. 
+
+```{r}
 lncap <- generate_DESeq_object(data, c("LNCAP_Hypoxia", "LNCAP_Normoxia"))
 pc3 <- generate_DESeq_object(data, c("PC3_Hypoxia", "PC3_Normoxia"))
 ```
 
-We can double check to make sure that the appropriate columns have been selected and that the colData is correct.
+Now that we have separated the LNCaP and PC3 samples, the `variable_gene_heatmap()` should display genes that are enriched in either the hypoxia vs normoxia conditions.
 
-```{r}
-lncap@colData
-head(lncap@assays$data@listData$counts)
-```
-
-We can again assess the top most variable genes and sample variability using `variable_gene_heatmap()`, this time on the individually subsetted objects:
-
-```{r fig.width=6, fig.height=2.7}
+```{r results="hide"}
 lncap_vsd <- vst(lncap, blind = T)
 pc3_vsd <- vst(pc3, blind = T)
 a <- variable_gene_heatmap(lncap_vsd, 30, annotation = annotation, title = "LNCaP variable genes")
 b <- variable_gene_heatmap(pc3_vsd, 30, annotation = annotation, title = "PC3 variable genes")
+``` 
+```{r fig.width=12, fig.height=5}
 gridExtra::grid.arrange(a[[4]],b[[4]], nrow = 1)
 ```
 
-Now that we have created a dds object using only the LNCaP samples, we now see the genes that are driving the clustering between the Hypoxia and Normoxia conditions. This is a vastly different set of genes than was observed when we had both cell lines combined. Our differential gene expression analysis will yield a greater depth of genes for the comparison we care about, Hypoxia vs Normoxia.
+This is a vastly different set of genes than was observed when we had both cell lines combined. Our differential gene expression analysis will now yield a greater depth of genes for the comparison we care about: hypoxia vs normoxia.
 
 ## Extracting results from dds object
 
-Now that we have assessed sample-to-sample variability and gained confidence that our experiment was performed correctly, we can start answering the most pressing question: *what genes are differentially upregulated or downregulated by hypoxia in each cell line?* In this section, I will explain how to generate differential expression gene lists from the dds objects.
+Now that we have assessed sample-to-sample variability and gained confidence that our experiment was performed correctly, we are ready to start answering the most pressing question: *what genes are differentially upregulated or downregulated by hypoxia in each cell line?* In this section, I will explain how to generate differential expression gene lists from the DESeq2 objects.
 
-To extract the differentially expressed genes from the dds object, we will use the `results()` function:
+To extract the differentially expressed genes from the DESeq2 object, we will use the `results()` function:
 
 ```{r}
 results(lncap, contrast = c("condition", "LNCAP_Hypoxia", "LNCAP_Normoxia"))
 ```
 
-We observe that the Hypoxia condition was compared to the Normoxia condition, and that there are a series of statistics calculated for each gene. The columns that you should pay the most attention to are `baseMean`, `log2FoldChange`, and `padj`. 
+We observe that the hypoxia condition was compared to the normoxia condition, and that there are columns corresponding to statistics calculated for each gene. The columns that you should pay the most attention to are `baseMean`, `log2FoldChange`, and `padj`. 
 
 * The `baseMean` is a measure of the overall expression of the gene. We can assess whether is it a highly expressed gene or if it is only barely above baseline.
-* The `log2FoldChange` measures how much higher the gene is in the Hypoxia condition compared to the Normoxia condition (negative values mean the expression is higher in Normoxia). 
+* The `log2FoldChange` measures how much higher the gene is in the hypoxia condition compared to the normoxia condition. Negative values mean the expression is higher in the normoxia group.
 * The `padj` column is a measure of how likely the gene is to be significantly different between the two conditions being compared.
 
-We will use these statistics to filter and organize the data, and export lists of differentially expressed genes. The following criteria are used:
+We will use these metrics to filter, organize, and export lists of differentially expressed genes. The following criteria are used:
 
-1. Filter the genes for those that are signifcantly different based on padj (padj < cutoff).
-2. Sort by log2FoldChange to identify the genes that are most highly up or down.
-3. (optional) Filter out genes that are very lowly-expressed (low baseMean values) that are not as likely to be biologically relevant. To do so, we can either use baseMean or we can calculate another metric called "counts per million". The counts per million value is more intuitive because it is more comparable across different sequencing experiments.
+1. Select genes that are signifcantly different based on `padj`, in which the `padj` is lower than a specified cutoff value.
+2. Sort by `log2FoldChange` to identify the genes that are most highly up or down.
+3. (optional) Filter out genes that are very lowly-expressed (low `baseMean` values) that are not as likely to be biologically relevant. To do so, we can either use `baseMean` or we can calculate another metric called "counts per million" (cpm). The counts per million value is more intuitive because we can use a similar cutoff value across different sequencing experiments.
+4. Generate a ranked gene list file (`.rnk`), which is a list of all the genes in the dataset ordered by log2FoldChange. This file is required for Gene Set Enrichment Analysis, which I will explain later in the [GSEA section](#GSEA).
 
-Since there are many variations of sorting / filtering the data, I wrote the function `generate_DE_results()` below to perform multiple filtering steps and provide output in the form of csv files. I export these files since they can be easily shared and interpreted by other bench scientists without having to read the data into R.
+Since there are many variations of sorting / filtering the data, I wrote the function `generate_DE_results()` to perform multiple filtering steps and provide output in the form of csv files. I export these files so they can be easily shared and interpreted by other bench scientists without having to read the data into R.
 
 ```{r}
 generate_DE_results <- function (dds, comparisons, padjcutoff = 0.001, log2cutoff = 0.5, cpmcutoff = 2) {
@@ -624,8 +656,8 @@ generate_DE_results <- function (dds, comparisons, padjcutoff = 0.001, log2cutof
   de_genes_cpm <- res[which(res$avg_cpm > cpmcutoff & res$padj < padjcutoff),]
   
   # write output to files
-  write.csv (de_genes_padj, file = paste0(comparisons[1], "_vs_", comparisons[2], "_padjgenes.csv"), row.names =F)
-  write.csv (de_genes_log2f, file = paste0(comparisons[1], "_vs_", comparisons[2], "_log2f.csv"), row.names =F)
+  write.csv (de_genes_padj, file = paste0(comparisons[1], "_vs_", comparisons[2], "_padj_cutoff.csv"), row.names =F)
+  write.csv (de_genes_log2f, file = paste0(comparisons[1], "_vs_", comparisons[2], "_log2f_cutoff.csv"), row.names =F)
   write.csv (de_genes_cpm, file = paste0(comparisons[1], "_vs_", comparisons[2], "_cpm_cutoff.csv"), row.names =F)
   write.csv (combined_data, file = paste0(comparisons[1], "_vs_", comparisons[2], "_allgenes.csv"), row.names =F)
   write.table (res_prot_ranked, file = paste0(comparisons[1], "_vs_", comparisons[2], "_rank.rnk"), sep = "\t", row.names = F, quote = F)
@@ -634,30 +666,29 @@ generate_DE_results <- function (dds, comparisons, padjcutoff = 0.001, log2cutof
                nrow(de_genes_padj), " genes below padj ", padjcutoff, "\n",
                nrow(de_genes_log2f), " genes below padj ", padjcutoff, " and above a log2FoldChange of ", log2cutoff, "\n",
                nrow(de_genes_cpm), " genes below padj ", padjcutoff, " and above an avg cpm of ", cpmcutoff, "\n",
-               "Differential expression gene lists ordered by log2fchange with the cutoffs above have been generated.") )
+               "Gene lists ordered by log2fchange with the cutoffs above have been generated.") )
   gene_count <- tibble (cutoff_parameter = c("padj", "log2fc", "avg_cpm" ), 
                         cutoff_value = c(padjcutoff, log2cutoff, cpmcutoff), 
                         signif_genes = c(nrow(de_genes_padj), nrow(de_genes_log2f), nrow(de_genes_cpm)))
   invisible(gene_count)
 }
-
-lncap_output <- generate_DE_results (lncap, c("LNCAP_Hypoxia", "LNCAP_Normoxia"))
-pc3_output <- generate_DE_results(pc3, c("PC3_Hypoxia", "PC3_Normoxia"))
-
-lncap_output
-pc3_output
 ```
 
-After running the code, we should see a set of csv output files show up in the same folder as the R script. In addition, we should have a ranked gene list file, which is a list of all the genes in the dataset ordered by log2FoldChange. This file is required for Gene Set Enrichemnt Analysis, which I will explain in one of the sections below.
+After running the function, the console should display the number of genes that passed each filtering critera:
 
-We can read in the output files with `read.csv()` and observe what the file structure is like:
+```{r}
+lncap_output <- generate_DE_results (lncap, c("LNCAP_Hypoxia", "LNCAP_Normoxia"))
+pc3_output <- generate_DE_results(pc3, c("PC3_Hypoxia", "PC3_Normoxia"))
+```
+
+We should also see a set of csv files show up in the same folder as the R script. We can read in the output files with `read.csv()` and observe what the file structure is like:
 
 ```{r}
 res <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
 head(res,10)
 ```
 
-The "_allgenes.csv" file will be used for the downstream visualizations. It contains all the data from the results() output (log2FolChange etc.) as well as other important data, the gene annotations, as well as the normalized counts for all the genes that were in the original raw_counts.csv file for each of the samples in the comparison. This gives us all the information we need to make informative visualizations. We can still re-organize and re-filter the data for the visualizations based on our own liking. The other csv files such as _padjgenes.csv can be distributed to other researchers who are only interested in the gene lists.
+The `_allgenes.csv` file will be used in the next section for visualizations. It is an aggregate of all the data we have curated so far: the `results()` output, the gene annotations, and the normalized counts for every gene. This gives us all the information we need to make informative visualizations. We can further organize/filter the data for the visualizations based on user preferences. The other csv files, such as `_padj_cutoff.csv`, can be distributed to researchers who are only interested in the gene lists.
 
 ## Visualizations for DE results
 
@@ -666,20 +697,20 @@ Now that we have extracted the results from our DESeq2 object, we can start visu
 1. How is a given gene of interest expressed across groups?
 2. What is the sample to sample variability for the top differentially expressed genes?
 3. Are there more significantly upregulated or downregulated genes?
-4. If we are doing multiple comparisons, which differentially expressed genes are shared?
+4. If we are performing multiple comparisons, which differentially expressed genes are shared?
 5. What gene pathways are enriched in one group vs another?
 
 ### 1. PlotCounts (upgraded)
 
-We are often interested in plotting the normalized counts for certain genes of interest, in order to get a sense of the spread of the data and how genes are expressed accross each of the groups. This is especially of interest for genes that show up as differentially expressed in our DESeq results. A way to plot the normalized counts for each sample is by using the built-in `DESeq2::plotCounts()` function. However, this function leaves *a lot* to be desired.  As an example, I plot the gene IGFBP1 (a hypoxia-inducible gene) using its ensembl id below.
+We are often interested in plotting the normalized counts for certain genes of interest, in order to get a sense of the spread of the data and how genes are expressed accross each of the groups. This is especially of interest for genes that show up as differentially expressed in our DESeq2 results. A way to plot the normalized counts for each sample is by using the built-in `DESeq2::plotCounts()` function. However, this function leaves *a lot* to be desired. As an example, I plot the gene IGFBP1 (a hypoxia-inducible gene) using its Ensembl ID below.
 
-```{r}
+```{r fig.width=6, fig.height=4}
 plotCounts(dds, gene="ENSG00000146678", intgroup="condition")
 ```
 
-As you can see, the sample names aren't even all displayed if their names are too long. We can instead use ggplot2 to graph the data, by extract the normalized counts using `returnData = TRUE`:
+As you can see, the sample names aren't even all displayed if their names are too long. We can instead use ggplot2 to graph the data, by extracting the normalized counts using `returnData = TRUE`:
 
-```{r}
+```{r fig.width=6, fig.height=4}
 d <- plotCounts(dds, gene="ENSG00000146678", intgroup="condition", returnData=TRUE)
 d
 ggplot(d, aes(x=condition, y=count)) + 
@@ -687,10 +718,9 @@ ggplot(d, aes(x=condition, y=count)) +
   scale_y_log10(breaks=c(25,100,400))
 ```
 
-However, this is still very frustrating to work with, since we have to input the ensembl id instead of a gene name. Researchers typically want to search by gene name, and this function forces us to look up the ensembl id each time. To solve this problem, I wrote my own function `plot_counts()` to accept either the gene name, ensembl id, or an index such as `which.min(res$padj)`. I also provide two ways to normalize the data: by counts per million (cpm) or using the built-in DESeq2 normalized counts.
+However, this is still very frustrating to work with, since we have to input the Ensembl ID instead of a gene name. Researchers typically want to search by gene name, and this function forces us to look up the Ensembl ID each time. To solve this problem, I wrote my own function `plot_counts()` to accept either the gene name, Ensembl ID, or an index such as `which.min(res$padj)`. I also provide two ways to normalize the data: by counts per million (cpm) or using the built-in DESeq2 normalized counts.
 
-```{r}
-
+```{r fig.width=6, fig.height=4}
 plot_counts <- function (dds, gene, normalization = "DESeq2"){
   # read in the annotation file
   annotation <- read.csv("GRCh38.p13_annotation.csv", header = T, stringsAsFactors = F)
@@ -728,11 +758,11 @@ plot_counts <- function (dds, gene, normalization = "DESeq2"){
 plot_counts(dds, "IGFBP1")
 ```
 
-We observe that IGFBP1 is elevated in the the hypoxia conditions relative to their respective Normoxia controls. Interestingly, the upregulation of IGFBP1 is much higher in the PC3 cells than in the LNCaP cells. This is a nice example of how this plot is useful to determine relative expression levels between samples.
+We observe that IGFBP1 is elevated in the the hypoxia conditions relative to the respective normoxia controls. Interestingly, the upregulation of IGFBP1 is much higher in PC3 cells than in LNCaP cells. This is a nice example of how this plot is useful to determine relative expression levels between samples.
 
 ### 2. Differential gene heatmap
 
-The most commonly-used heatmap used to display RNA-seq results is the differential gene heatmap. This is a heatmap where the normalized values for each sample are plotted for the top N most upregulated genes which are significantly different between the comparison groups. Starting from the results object, we first filter the results by padj and then take the genes which have the greatest log2FoldChange value. The normalized counts for each gene is scaled by row in order to emphasize the difference between the comparison groups (Hypoxia vs Normoxia). The purpose of this visualization is to give a sense of how variable the data are from sample to sample, as well as to quickly examine what the top N genes are from the results. The custom function `DE_gene_heatmap()` below generates this plot using `pheatmap::pheatmap()` with the `scale = "row"` argument.
+The most commonly-used heatmap used to display RNA-seq results is the differential gene heatmap. This is a heatmap where the normalized values for each sample are plotted for the top most upregulated genes which are significantly different between the comparison groups. Starting from the results object, we first filter the results by `padj` and then take the genes which have the greatest `log2FoldChange` value. The normalized counts for each gene is scaled by row in order to emphasize the difference between the comparison groups (hypoxia vs normoxia). The purpose of this visualization is to give a sense of how variable the data are from sample to sample, as well as to quickly examine the top differential genes. I wrote the function `DE_gene_heatmap()` to generate this plot, using `pheatmap::pheatmap()` with the `scale = "row"` argument.
 
 ```{r}
 res <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
@@ -752,11 +782,11 @@ DE_gene_heatmap <- function(res, padj_cutoff = 0.0001, ngenes = 20) {
 DE_gene_heatmap(res, 0.001, 30)
 ```
 
-We observe that the sample to sample variablity is very consistent within groups. We do observe that LNCAP_Hypoxia_S1 has slightly more elevated expression of the top ~10 genes than LNCAP_Hypoxia_S2.
+We observe that the sample to sample variablity is very consistent within groups. We do notice that LNCAP_Hypoxia_S1 has more elevated expression of the top ~10 genes than LNCAP_Hypoxia_S2.
 
 ### 3. Volcano Plot
 
-Another common visualization for bulk RNA-seq results is the volcano plot, which is a scatterplot that displays the log2FoldChange value vs the -log(padj) value for each gene in the given comparison. We can use this plot to quickly identify genes that are highly upregulated or downregulated, or genes that have highly significant p-values. Below is code for `plot_volcano()`, as well as an example showing the most significant genes in the Hypoxia vs Normoxia comparison for LNCaP cells.
+Another common visualization for bulk RNA-seq is the volcano plot, which is a scatterplot that displays the `log2FoldChange` value vs the `-log(padj)` value for each gene in the given comparison. We can use this plot to quickly identify genes that are highly upregulated or downregulated, or genes that have highly significant p-values. Below is the custom function `plot_volcano()`, as well as an example showing the most significant genes in the hypoxia vs normoxia comparison for LNCaP cells.
 
 ```{r}
 res <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
@@ -799,7 +829,7 @@ Given that we have performed differential gene expression analysis on two differ
 1. Are the genes that are induced by hypoxia similar in both cell lines?
 2. Which significant genes are shared by both cell lines and which genes are unique to each cell line?
 
-To do so, we can take the significant genes from the Hypoxia_vs_Normoxia comparison for both lines and generate a scatterplot of their log2FoldChange values using the function below, `compare_significant_genes()`. This function will also assess the overlap in the gene lists, color coding the points by those that are significantly different in both cell lines, as well as those that are unique to each individual cell line.
+To do so, we can take the significant genes from the hypoxia vs normoxia comparison for both lines and generate a scatterplot of their `log2FoldChange` values using the custom function below, `compare_significant_genes()`. This function will assess the overlap in the gene lists, color coding significant genes that are shared by both cell lines, as well as those that are unique to each individual cell line.
 
 ```{r}
 res1 <- read.csv ("LNCAP_Hypoxia_vs_LNCAP_Normoxia_allgenes.csv", header = T)
@@ -818,7 +848,7 @@ compare_significant_genes <- function (res1, res2, padj_cutoff=0.0001, ngenes=25
   
   # identify overlap between genes in both tables
   combined$de_condition <- 1 # makes a placeholder column
-  combined$de_condition[which(combined$ensembl_id %in% intersect(genes1$ensembl_id,genes2$ensembl_id))] <- "Significant in both"
+  combined$de_condition[which(combined$ensembl_id %in% intersect(genes1$ensembl_id,genes2$ensembl_id))] <- "Significant in Both"
   combined$de_condition[which(combined$ensembl_id %in% setdiff(genes1$ensembl_id,genes2$ensembl_id))] <- paste0("Significant in ", samplenames[1])
   combined$de_condition[which(combined$ensembl_id %in% setdiff(genes2$ensembl_id,genes1$ensembl_id))] <- paste0("Significant in ", samplenames[2])
   combined[is.na(combined)] <- 0
@@ -828,8 +858,8 @@ compare_significant_genes <- function (res1, res2, padj_cutoff=0.0001, ngenes=25
                   tail(combined[which(combined$de_condition==paste0("Significant in ", samplenames[1])),],nlabel))
   label2 <- rbind(head(combined[which(combined$de_condition==paste0("Significant in ", samplenames[2])),],nlabel),
                   tail(combined[which(combined$de_condition==paste0("Significant in ", samplenames[2])),],nlabel))
-  label3 <- rbind(head(combined[which(combined$de_condition=="Significant in both"),],nlabel),
-                  tail(combined[which(combined$de_condition=="Significant in both"),],nlabel))
+  label3 <- rbind(head(combined[which(combined$de_condition=="Significant in Both"),],nlabel),
+                  tail(combined[which(combined$de_condition=="Significant in Both"),],nlabel))
   combined_labels <- rbind(label1,label2,label3)
   
   # plot the genes based on log2FoldChange, color coded by significance
@@ -847,17 +877,15 @@ compare_significant_genes <- function (res1, res2, padj_cutoff=0.0001, ngenes=25
 compare_significant_genes(res1,res2, samplenames = c("LNCaP", "PC3"), title = "Hypoxia-induced gene expression differences in LNCaP vs PC3 cells")  
 ```
 
-We observe that there are indeed a small subset of genes that are differentially expressed in both the LNCaP as well as PC3 comparisons (green labels). It is satisfying to see the majority of these shared genes fall along the x = y diagonal. For example, genes such as CA9, IGFBP5, STC1, and PPFIA4 are greatly induced by hypoxia in both lines. These genes are more likely to be real indicators of the hypoxia response. In contrast, the genes that are significant in only one condition lie for the most part on the vertical or horizontal axis. These genes are likely to be responses specific to the background of the cell line, and not universal indicators of hypoxia.
+We observe that there are indeed a small subset of genes that are differentially expressed in both the LNCaP as well as PC3 comparisons (green labels). It is satisfying to see that the majority of these shared genes fall along the x = y diagonal. For example, genes such as CA9, IGFBP5, STC1, and PPFIA4 are greatly induced by hypoxia in both lines. These genes are more likely to be real indicators of the hypoxia response. In contrast, the genes that are significant in only one cell line mostly lie on the vertical or horizontal axis. These genes are likely part of responses specific to the background of each cell line, and not universal indicators of hypoxia.
 
-### 5. Gene set enrichment analysis (GSEA)
+### 5. Gene set enrichment analysis (GSEA) {#GSEA}
 
-Gene Set Enrichment Analysis (GSEA) can be used to test whether pathways consisting of a collection of multiple genes are enriched in one group compared to another. For example, there is a "gene set" of 200 genes that compose the hypoxia pathway. Although one specific gene in the pathway may not be statistically significant in your differential gene expression analysis, the pathway composed of all of the genes could be significantly enriched.
-
-GSEA is useful if there are only subtle changes in your dataset, and you want to determine if groups of genes as a collective are significantly altered. For this particular analysis, we would like to determine whether the genes associated with the hypoxia pathway are upregulated in the hypoxia condition, as a way to check that the experiment was performed correctly.
+Gene Set Enrichment Analysis (GSEA) can be used to test whether pathways consisting of multiple genes are enriched in one group compared to another. For example, there is a "gene set" of 200 genes that composes the hypoxia pathway. We would like to determine whether the genes associated with the hypoxia pathway are collectively upregulated in the hypoxia condition, as a way to check that the experiment was performed correctly. We also want to determine what other pathways hypoxia is affecting inside the cell.
 
 To perform GSEA, we have to rank every gene available in terms of how much higher or lower it is in group A vs group B. This is called a ranked list file, and we have already generated one in the above section using the function `generate_DE_results()`. Then, we plug this list of genes into either the GSEA application from the Broad Institute (https://www.gsea-msigdb.org/gsea/index.jsp), or into the R package `fgsea` from Bioconductor (https://bioconductor.org/packages/release/bioc/html/fgsea.html). If you choose to use the GSEA application rather than the R package, the rank files have to be in a very specific format. The genes must be all upper-case, and there can only be a column for the gene name and its corresponding average log-foldchange. Below is some code that will generate rank files that can be used in either application.
 
-To use the R package `fgsea`, you can install using the commands:
+The R package `fgsea` can be installed from Bioconductor using the commands:
 
 ```{r eval=F}
 if (!requireNamespace("BiocManager", quietly = TRUE))
@@ -865,7 +893,7 @@ if (!requireNamespace("BiocManager", quietly = TRUE))
 BiocManager::install("fgsea")
 ```
 
-We also have to download the pathway files from the GSEA MSigDB webpage at: https://www.gsea-msigdb.org/gsea/msigdb/collections.jsp and load them in using `fgsea::gmtPathways`. A commonly-used set of pathways is the HALLMARK pathway set, which I will use below.
+We also need to download the pathway files from the GSEA MSigDB webpage at: https://www.gsea-msigdb.org/gsea/msigdb/collections.jsp and load them in using `fgsea::gmtPathways()`. I will be working with the HALLMARK pathway set.
 
 ```{r message=F, warning=F}
 library(fgsea)
@@ -874,12 +902,18 @@ hallmark_pathway <- gmtPathways("h.all.v7.0.symbols.gmt.txt")
 head(names(hallmark_pathway))
 ```
 
-Then, we have to turn our ranked list into a vector in which the log2FoldChange value is named with the gene name, as well as get rid of any NA values or duplicate gene entries.
+The gene sets are stored inside each pathway entry in the list:
+
+```{r}
+head(hallmark_pathway$HALLMARK_HYPOXIA, 20)
+```
+
+After loading the pathways, we have to turn our ranked list into a vector in which the `log2FoldChange` value is named with the gene name. We also need to get rid of any NA values or duplicate gene entries. The custom function `prepare_ranked_list()` will perform these operations.
 
 ```{r}
 # load the ranked list
 lncap_ranked_list <- read.table("LNCAP_Hypoxia_vs_LNCAP_Normoxia_rank.rnk", header = T, stringsAsFactors = F)
-lncap_ranked_list
+head(lncap_ranked_list)
 
 # formats the ranked list for the fgsea() function
 prepare_ranked_list <- function(ranked_list) { 
@@ -901,7 +935,7 @@ head(lncap_ranked_list)
 
 Now that we have the named vector, we can plug it into the `fgsea()` function along with the hallmark pathways object. This will generate a table of results containing the enrichment scores associated with each pathway.
 
-```{r}
+```{r warning=F}
 # generate GSEA results table using fgsea() by inputting the pathway list and ranked list
 fgsea_results <- fgsea(pathways = hallmark_pathway,
                   stats = lncap_ranked_list,
@@ -912,9 +946,9 @@ fgsea_results <- fgsea(pathways = hallmark_pathway,
 fgsea_results %>% arrange (desc(NES)) %>% select (pathway, padj, NES) %>% head()
 ```
 
-The normalized enrichment scores (NES) tell us how much higher the pathway is in the Hypoxia samples vs the Normoxia samples. In this case, we observe that the most enriched pathway in response to hypoxia, as expected, is the HALLMARK_HYPOXIA pathway.
+The normalized enrichment scores (NES) tell us how much more enriched the pathway is in the hypoxia samples vs the normoxia samples. As expected, we observe that the most enriched pathway in response to hypoxia is the HALLMARK_HYPOXIA pathway.
 
-We can visualize the statistics for each pathway using a "waterfall" plot, which is a sideways bar plot of normalized enrichment scores for each of the pathways color coded by significance:
+We can visualize the statistics for each pathway using a "waterfall" plot, which is a sideways bar plot of normalized enrichment scores for each of the pathways color-coded by significance. This plot is great for quickly identifying the significantly enriched pathways.
 
 ```{r}
 waterfall_plot <- function (fsgea_results, graph_title) {
@@ -931,23 +965,24 @@ waterfall_plot <- function (fsgea_results, graph_title) {
 waterfall_plot(fgsea_results, "Hallmark pathways altered by hypoxia in LNCaP cells")
 ```
 
-We observe that, in addition to the hypoxia pathway, the androgen response and MTORC1 signaling pathways also appear to be significantly enriched in hypoxic conditions. Interesting metabolic changes are also occuring. Similar to the Warburg effect, we observe that the glycolysis pathway is greatly enriched in the Hypoxia condition, and that oxidative phosphorylation is negatively enriched. Since tumors become progressively hypoxic during cancer progression, it is possible that the hypoxic conditions are a driver of the switch from oxidative phosphorylation to glycolysis as an energy source.
+In addition to the hypoxia pathway, the androgen response and MTORC1 signaling pathways also appear to be significantly enriched in hypoxic conditions. Some interesting metabolic changes are also occuring. Similar to the Warburg effect, we observe that the glycolysis pathway is greatly enriched in the hypoxia condition, and that oxidative phosphorylation is negatively enriched. Since tumors become progressively hypoxic during cancer progression, it is possible that the hypoxic conditions are a driver of the switch from oxidative phosphorylation to glycolysis as an energy source.
 
-Interestingly, the interferon response pathways are both negatively enriched in hypoxic conditions, suggesting that hypoxic cells may be less able to respond to interferons. Given that the cells were cultured in vitro, in an environment where interferons are probably not present, this result is unexpected. This plot is great for quickly identifying the significantly enriched pathways. 
+Interestingly, the interferon response pathways are both negatively enriched in hypoxic conditions, suggesting that hypoxic cells may be less able to respond to interferons. Given that the cells were cultured in vitro (an environment where interferons are probably not present), this result is unexpected.
 
-We can also narrow in on specific pathways of interest by plotting "enrichment curves" using the function `fgsea::plotEnrichment()`. In these plots, the black ticks on the x-axis indicate a gene in the pathway, and the green curve is a measure of how enriched the genes are for either the Hypoxia group (left side) or the Normoxia group (right side). An example of pathways highly enriched in either the Hypoxia or Normoxia groups are shown below.
+We can also narrow in on specific pathways of interest by plotting "enrichment curves" using the function `fgsea::plotEnrichment()`. In these plots, the black ticks on the x-axis indicate a gene in the pathway, and the green curve is a measure of how enriched the genes are for either the hypoxia group (left side) or the normoxia group (right side). Example curves for pathways highly enriched in either hypoxia or normoxia are shown below.
 
-```{r}
+```{r fig.width=5, fig.height=3}
 # wrapper for fgsea::plotEnrichment()
 plot_enrichment <- function (geneset, pathway, ranked_list) {
   plotEnrichment(geneset[[pathway]], ranked_list)+labs (title = pathway)
 }
 # example of positively enriched pathway (up in Hypoxia)
-plot_enrichment(hallmark_pathway,"HALLMARK_HYPOXIA", lncap_ranked_list)
 plot_enrichment(hallmark_pathway, "HALLMARK_GLYCOLYSIS" , lncap_ranked_list)
 # example of negatively enriched pathway (down in Hypoxia)
 plot_enrichment(hallmark_pathway, "HALLMARK_OXIDATIVE_PHOSPHORYLATION" , lncap_ranked_list)
 ```
+
+These enrichment curves are often shown in scientific publications to emphasize upregulation / downregulation of specific pathways of interest.
 
 ## Conclusion
 
@@ -957,10 +992,8 @@ Here, I have shown you a complete bulk RNA-sequencing analysis pipeline, startin
 2. However, both cell lines upregulates a shared set of genes under hypoxic conditions.
 3. Hypoxia upregulates genes associated with glycolysis and downregulates genes associated with oxidative phosphorylation, suggesting a metabolic switch is occuring.
 
-We have also generated differential expression gene lists for each cell line that can be explored for novel genes associated with the hypoxia response, as well as showcased several different types of visualizations that can be used to display and explore bulk RNA-sequencing data.
+We have generated differential expression gene lists for each cell line, which can be explored for novel genes associated with the hypoxia response. Furthermore, we have learned how to produce several different types of visualizations that can be used to display and explore bulk RNA-sequencing data.
 
-I hope my analysis pipepline has helped you make sense of your bulk RNA-sequencing data. If you are also interested in learning about single-cell RNA-sequencing data analysis, I have a comprehensive guide written here. Thanks for reading!
-
-
+I hope my analysis pipepline has helped you make sense of your bulk RNA-sequencing data. If you are also interested in learning about single-cell RNA-sequencing data analysis, I have a comprehensive guide written at https://erilu.github.io/single-cell-rnaseq-analysis/. Thanks for reading!
 
 
