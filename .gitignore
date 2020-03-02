@@ -1,6 +1,3 @@
-*.nb.html
-*.rnk
-*.csv
 /output
 /test_output
 /data
