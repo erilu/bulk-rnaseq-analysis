@@ -24,7 +24,7 @@ However, processing raw sequencing data and performing differential gene express
 3. Differential gene expression analysis using DESeq2
 4. Visualizations for bulk RNA-seq results
 
-If you are performing your own RNA-seq experiment and have obtained raw data from your sequencing facility, you can start this guide from [Section 2](#STAR).
+If you are performing your own RNA-seq experiment and have obtained raw data from your sequencing facility, you can start this guide from the section: [Mapping reads using STAR].
 
 ## Obtaining raw data from GEO
 
@@ -126,7 +126,7 @@ mv SRR7179541_pass.fastq.gz PC3_Hypoxia_S2.fastq.gz
 
 We won't need the individual SRA runs anymore, so we can remove them all using the command `rm SRR*`, which removes all the files in the folder that begin with "SRR". Now, the folder should contain a total of 8 FASTQ files: 4 for LNCaP and 4 for PC3. We are ready to begin aligning these FASTQ files to the reference genome!
 
-## Mapping reads using STAR {#STAR}
+## Mapping reads using STAR
 
 Each read in your FASTQ file must be "mapped" to a reference genome. "Mapping" can be described as finding the place in the reference genome that best matches the fragment of the mRNA transcript captured in the read. In this section, I will describe the concepts behind mapping reads to a reference genome, and how to do it using the tool STAR (Spliced Transcripts Alignment to a Reference, https://github.com/alexdobin/STAR) and some Python scripting.
 
@@ -542,7 +542,7 @@ We see that the clustering is very similar to what we observed in the distance p
 
 ### 3. PCA Plot
 
-A principal components plot is another way to observe how diverse the samples are, which uses a cartesian coordinate system rather than a heatmap. As always, the samples which are most similar with each other in terms of their gene expression values will be closer to each other on the plot. The axes that are displayed correspond to the top two principal components that explain the majority of the variability in the data.
+A principal components plot is another way to observe how diverse the samples are. As always, the samples which are most similar with each other in terms of their gene expression values will be closer to each other on the plot. This plot uses a Cartesian coordinate system, and the axes that are displayed correspond to the top two principal components that explain the majority of the variability in the data.
 
 ```{r pca-plot, fig.width=8, fig.height=4}
 plot_PCA = function (vsd.obj) {

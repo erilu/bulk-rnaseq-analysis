@@ -8,7 +8,7 @@ March 1, 2020
 -   [Obtaining raw data from GEO](#obtaining-raw-data-from-geo)
     -   [Download FASTQ files using SRA tools](#download-fastq-files-using-sra-tools)
     -   [Concatenating FASTQ files](#concatenating-fastq-files)
--   [Mapping reads using STAR](#STAR)
+-   [Mapping reads using STAR](#mapping-reads-using-star)
     -   [Concepts behind mapping reads](#concepts-behind-mapping-reads)
     -   [Building the genome index](#building-the-genome-index)
     -   [Mapping reads](#mapping-reads)
@@ -28,7 +28,7 @@ March 1, 2020
     -   [2. Differential gene heatmap](#differential-gene-heatmap)
     -   [3. Volcano Plot](#volcano-plot)
     -   [4. LogFoldChange comparison plot](#logfoldchange-comparison-plot)
-    -   [5. Gene set enrichment analysis](#GSEA)
+    -   [5. Gene set enrichment analysis](#gene-set-enrichment-analysis)
 -   [Conclusion](#conclusion)
 
 Introduction
@@ -47,7 +47,7 @@ However, processing raw sequencing data and performing differential gene express
 3.  Differential gene expression analysis using DESeq2
 4.  Visualizations for bulk RNA-seq results
 
-If you are performing your own RNA-seq experiment and have obtained raw data from your sequencing facility, you can start this guide from [Section 2](#STAR).
+If you are performing your own RNA-seq experiment and have obtained raw data from your sequencing facility, you can start this guide from the section: [Mapping reads using STAR](#mapping-reads-using-star).
 
 Obtaining raw data from GEO
 ---------------------------
@@ -737,7 +737,7 @@ We see that the clustering is very similar to what we observed in the distance p
 
 ### 3. PCA Plot
 
-A principal components plot is another way to observe how diverse the samples are, which uses a cartesian coordinate system rather than a heatmap. As always, the samples which are most similar with each other in terms of their gene expression values will be closer to each other on the plot. The axes that are displayed correspond to the top two principal components that explain the majority of the variability in the data.
+A principal components plot is another way to observe how diverse the samples are. As always, the samples which are most similar with each other in terms of their gene expression values will be closer to each other on the plot. This plot uses a Cartesian coordinate system, and the axes that are displayed correspond to the top two principal components that explain the majority of the variability in the data.
 
 ``` r
 plot_PCA = function (vsd.obj) {
@@ -862,7 +862,7 @@ We will use these metrics to filter, organize, and export lists of differentiall
 1.  Select genes that are signifcantly different based on `padj`, in which the `padj` is lower than a specified cutoff value.
 2.  Sort by `log2FoldChange` to identify the genes that are most highly up or down.
 3.  (optional) Filter out genes that are very lowly-expressed (low `baseMean` values) which are not as likely to be biologically relevant. To do so, we can either use `baseMean` or we can calculate another metric called "counts per million" (cpm). The counts per million value is more intuitive because we can use a similar cutoff value across different sequencing experiments.
-4.  Generate a ranked gene list file (`.rnk`), which is a list of all the genes in the dataset ordered by `log2FoldChange`. This file is required for Gene Set Enrichment Analysis, which I will explain later in the [GSEA section](#GSEA).
+4.  Generate a ranked gene list file (`.rnk`), which is a list of all the genes in the dataset ordered by `log2FoldChange`. This file is required for Gene Set Enrichment Analysis, which I will explain in a later section of this guide.
 
 Since there are many variations of sorting / filtering the data, I wrote the function `generate_DE_results()` to perform multiple filtering steps and provide output in the form of csv files. I export these files so they can be easily shared and interpreted by other bench scientists without having to read the data into R.
 
@@ -1281,12 +1281,12 @@ fgsea_results %>% arrange (desc(NES)) %>% select (pathway, padj, NES) %>% head()
 ```
 
     ##                       pathway       padj      NES
-    ## 1            HALLMARK_HYPOXIA 0.01083189 2.183157
-    ## 2  HALLMARK_ANDROGEN_RESPONSE 0.01083189 1.964545
-    ## 3       HALLMARK_ANGIOGENESIS 0.01083189 1.922325
-    ## 4         HALLMARK_GLYCOLYSIS 0.01083189 1.877426
-    ## 5 HALLMARK_TGF_BETA_SIGNALING 0.01083189 1.871135
-    ## 6     HALLMARK_UV_RESPONSE_DN 0.01083189 1.764016
+    ## 1            HALLMARK_HYPOXIA 0.01214772 2.183089
+    ## 2  HALLMARK_ANDROGEN_RESPONSE 0.01214772 1.911479
+    ## 3       HALLMARK_ANGIOGENESIS 0.01214772 1.893114
+    ## 4         HALLMARK_GLYCOLYSIS 0.01214772 1.874638
+    ## 5 HALLMARK_TGF_BETA_SIGNALING 0.01214772 1.838240
+    ## 6     HALLMARK_UV_RESPONSE_DN 0.01214772 1.778000
 
 The normalized enrichment scores (NES) tell us how much more enriched the pathway is in the hypoxia samples compared to the normoxia samples. As expected, we observe that the most enriched pathway in response to hypoxia is the HALLMARK\_HYPOXIA pathway.
 
