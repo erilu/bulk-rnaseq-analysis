@@ -391,7 +391,7 @@ my_colData
 
 The vector above named `condition` can be used for the `design` argument. Now that we have all the required inputs, we will create a DESeq2 object (usually named `dds`) using `DESeqDataSetFromMatrix()`:
 
-```{r}
+```{r, message=F, warning=F}
 dds <- DESeqDataSetFromMatrix(countData = data,
 							  colData = my_colData,
 							  design = ~condition)
@@ -403,7 +403,7 @@ This can then be processed using the function `DESeq()`, which will perform diff
 2. estimation of dispersion: estimateDispersions
 3. Negative Binomial GLM fitting and Wald statistics: nbinomWaldTest
 
-```{r message=F}
+```{r message=F, warning=F}
 dds <- DESeq(dds)
 ```
 ```{}
@@ -424,16 +424,16 @@ dds
 We can also sift through the `dds` object using `@` and `$`. For example, we can find the raw counts data this way:
 
 ```{r eval=F}
-head(dds@assays$data@listData$counts)
+head(dds@assays@data$counts)
 ```
 ```{r echo=F}
-head(as.data.frame(dds@assays$data@listData$counts))
+head(as.data.frame(dds@assays@data$counts))
 ```
 
-We can also find the raw counts from the `dds` object using the function `counts(dds, normalized = F)`. To obtain the normalized counts, we set `normalized = T`. For example:
+Another way to get the raw counts from the `dds` object is by using the function `counts(dds, normalized = F)`. If you want the normalized counts instead, we set `normalized = T`. For example:
 
 ```{r}
-normalized_counts <- counts(dds, normalized = F)
+normalized_counts <- counts(dds, normalized = T)
 ```
 ```{r eval=F}
 head(normalized_counts)
@@ -442,7 +442,7 @@ head(normalized_counts)
 head(as.data.frame(normalized_counts))
 ```
 
-These normalized counts can be used to compare gene expression values between samples.
+As you can see, the normalized counts are different in value than the raw counts, as expected. These normalized counts can be used to compare gene expression values between samples.
 
 ### Making an annotation file from BioMart
 
@@ -583,7 +583,7 @@ generate_DESeq_object <- function (my_data, groups) {
 
 The function should print the `colData` that was used to generate each DESeq2 object, so we can double check to make sure that the appropriate sample columns were selected and that the grouping was correct. 
 
-```{r}
+```{r, warning=F}
 lncap <- generate_DESeq_object(data, c("LNCAP_Hypoxia", "LNCAP_Normoxia"))
 pc3 <- generate_DESeq_object(data, c("PC3_Hypoxia", "PC3_Normoxia"))
 ```
